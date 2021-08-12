@@ -7,7 +7,7 @@ class AVE(Dataset):
     Zero-Shot Capable Dataloader for the Audio-Visual Events Dataset. CML only.
     '''
     def __init__(self, rootdir, split, settings, video_transform=None, audio_transform=None, precomputed=True):
-        self.settings = json.load(rootdir + settings)
+        self.settings = json.load(open(settings))
         self.rootdir = rootdir
         self.split = split
         self.precomputed = precomputed
@@ -43,7 +43,16 @@ class AVE(Dataset):
             temporal_label = self.temporal_labels[self.data[index]]
             spatial_label = self.spatial_labels[self.data[index]]
             class_names = self.get_class_names(spatial_label)
-            return video.squeeze(), audio.squeeze(), temporal_label, spatial_label, class_names
+            start, end = 0,10
+            for j in range(9,-1,-1):
+                if temporal_label[j] == 1:
+                    end = j + 1
+                    break
+            for i in range(10):
+                if temporal_label[j] == 1:
+                    start = i
+                    break
+            return video.squeeze(), audio.squeeze(), temporal_label, spatial_label, class_names, start, end
         else:
             video = self.get_video(self.rootdir + self.settings['raw']['video'] + self.info[index][1] + '.mp4')
             audio_file = self.rootdir + self.settings['raw']['audio'] + self.info[index][1] + '.wav' # change to audio at some point
