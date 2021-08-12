@@ -1,0 +1,23 @@
+{
+    "rootdir" : "AVE_Dataset/",
+    "classes" : "classes.json",
+    "test_split": 0.8,
+    "zsl_classes": [0, 1, 2, 3, 4],
+    "precomputed" : {
+        "folder" : "AVE_Features/",
+        "video" : "visual_feature.h5",
+        "audio" : "audio_feature.h5",
+        "spatial" : "labels.h5",
+        "temporal" : "temporal_labels.h5",
+        "zsl_train" : "trainZSL.h5",
+        "zsl_test" : "testZSL.h5",
+        "zsl_val" : "valZSL.h5"
+    },
+    "raw" : {
+        "video" : "AVE/",
+        "audio" : "AVE_Audio/",
+        "zsl_train" : "trainSetZSL.txt",
+        "zsl_test" : "testSetZSL.txt",
+        "zsl_val" : "valSetZSL.txt"
+    }
+}
