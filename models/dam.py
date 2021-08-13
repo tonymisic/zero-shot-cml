@@ -36,10 +36,10 @@ class MLP(nn.Module):
         x = self.dropout(x)
         x = F.relu(self.fc2(x))
         x = self.dropout(x)
-        return self.fc3(x)
+        return F.softmax(self.fc3(x), dim=0)
 
 def dam(global_audio, global_video, audio, video, segments=10):
-    """Dual-Attention Matching Module A2V and V2A
+    """Dual-Attention Matching Module
     """
     # Global Video to Audio
     pred_audio = torch.zeros([segments])
@@ -51,3 +51,13 @@ def dam(global_audio, global_video, audio, video, segments=10):
         pred_video[i] = torch.dot(global_audio, video[i])
     # combine and return
     return torch.div(torch.add(torch.sigmoid(pred_audio), torch.sigmoid(pred_video)), 2)
+
+def remove_background(tensor, start, end):
+    return tensor[:, start[0]:end[0], :]
+
+def zero_pad_background(tensor, start, end, temporal_labels):
+    for i in range(tensor.size(0)):
+        if torch.sum(temporal_labels[i]) < 10:
+            tensor[i, 0:start[i], :] = torch.zeros(tensor[i, 0:start[i], :].size())
+            tensor[i, end[i]::, :] = torch.zeros(tensor[i, end[i]::, :].size())
+    return tensor

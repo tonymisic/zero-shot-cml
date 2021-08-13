@@ -1,4 +1,4 @@
-import h5py, json, math, random, numpy as np
+import h5py, json, math, random, numpy as np, torch
 
 def load_info(filename):
     '''(string) root_dir: root directory of dataset

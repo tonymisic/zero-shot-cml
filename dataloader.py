@@ -6,7 +6,7 @@ class AVE(Dataset):
     '''
     Zero-Shot Capable Dataloader for the Audio-Visual Events Dataset. CML only.
     '''
-    def __init__(self, rootdir, split, settings, video_transform=None, audio_transform=None, precomputed=True):
+    def __init__(self, rootdir, split, settings, video_transform=None, audio_transform=None, precomputed=True, ZSL=True):
         self.settings = json.load(open(settings))
         self.rootdir = rootdir
         self.split = split
@@ -20,21 +20,29 @@ class AVE(Dataset):
             self.video_transform = video_transform
             self.audio_transform = audio_transform
         self.class_map = json.load(open(self.rootdir + self.settings['classes']))
-        if self.split == 'train': # seen training
-            if precomputed:
-                self.data = data_from_file(self.rootdir + self.settings['precomputed']['folder'] + self.settings['precomputed']['zsl_train'])
-            else:
-                self.info = load_info(self.rootdir + self.settings['raw']['zsl_train'])
-        elif self.split == 'test': # seen testing
-            if precomputed:
-                self.data = data_from_file(self.rootdir + self.settings['precomputed']['folder'] + self.settings['precomputed']['zsl_test'])
-            else:
-                self.info = load_info(self.rootdir + self.settings['raw']['zsl_test'])
-        elif self.split == 'val': # unseen validation
-            if precomputed:
-                self.data = data_from_file(self.rootdir + self.settings['precomputed']['folder'] + self.settings['precomputed']['zsl_val'])
-            else:
-                self.info = load_info(self.rootdir + self.settings['raw']['zsl_val'])
+        if ZSL:
+            if self.split == 'train': # seen training
+                if precomputed:
+                    self.data = data_from_file(self.rootdir + self.settings['precomputed']['folder'] + self.settings['precomputed']['zsl_train'])
+                else:
+                    self.info = load_info(self.rootdir + self.settings['raw']['zsl_train'])
+            elif self.split == 'test': # seen testing
+                if precomputed:
+                    self.data = data_from_file(self.rootdir + self.settings['precomputed']['folder'] + self.settings['precomputed']['zsl_test'])
+                else:
+                    self.info = load_info(self.rootdir + self.settings['raw']['zsl_test'])
+            elif self.split == 'val': # unseen validation
+                if precomputed:
+                    self.data = data_from_file(self.rootdir + self.settings['precomputed']['folder'] + self.settings['precomputed']['zsl_val'])
+                else:
+                    self.info = load_info(self.rootdir + self.settings['raw']['zsl_val'])
+        else:
+            if self.split == 'train':
+                self.data = data_from_file(self.rootdir + self.settings['precomputed']['folder'] + 'train_order.h5')
+            elif self.split == 'test':
+                self.data = data_from_file(self.rootdir + self.settings['precomputed']['folder'] + 'test_order.h5')
+            elif self.split == 'val':
+                self.data = data_from_file(self.rootdir + self.settings['precomputed']['folder'] + 'val_order.h5')
 
     def __getitem__(self, index):
         if self.precomputed:
@@ -44,13 +52,13 @@ class AVE(Dataset):
             spatial_label = self.spatial_labels[self.data[index]]
             class_names = self.get_class_names(spatial_label)
             start, end = 0,10
-            for j in range(9,-1,-1):
-                if temporal_label[j] == 1:
-                    end = j + 1
+            for i in range(9,-1,-1):
+                if temporal_label[i] == 1:
+                    end = i + 1
                     break
-            for i in range(10):
+            for j in range(10):
                 if temporal_label[j] == 1:
-                    start = i
+                    start = j
                     break
             return video.squeeze(), audio.squeeze(), temporal_label, spatial_label, class_names, start, end
         else:
