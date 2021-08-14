@@ -9,7 +9,7 @@ Main training script
 '''
 wandb.init(project="DAM Baseline",
     config={
-        "task": "Zero Shot CML",
+        "task": "Standard CML",
         "learning_rate": 0.001,
         "dataset": "AVE",
         "device": "GTX1080",
@@ -28,8 +28,8 @@ gzs.split_precomputed()
 # devices
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # loaders
-train_data = AVE('AVE_Dataset/', 'train', 'settings.json', precomputed=True, ZSL=True)
-test_data = AVE('AVE_Dataset/', 'test', 'settings.json', precomputed=True, ZSL=True)
+train_data = AVE('AVE_Dataset/', 'train', 'settings.json', precomputed=True, ZSL=False)
+test_data = AVE('AVE_Dataset/', 'test', 'settings.json', precomputed=True, ZSL=False)
 train_loader = DataLoader(train_data, wandb.config['batch_size'], shuffle=True, num_workers=3, pin_memory=True)
 test_loader = DataLoader(test_data, 1, shuffle=True, num_workers=1, pin_memory=True)
 # models
