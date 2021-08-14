@@ -53,7 +53,7 @@ def dam(global_audio, global_video, audio, video, segments=10):
     return torch.div(torch.add(torch.sigmoid(pred_audio), torch.sigmoid(pred_video)), 2)
 
 def remove_background(tensor, start, end):
-    return tensor[:, start[0]:end[0], :]
+    return tensor[start:end, :]
 
 def zero_pad_background(tensor, start, end, temporal_labels):
     for i in range(tensor.size(0)):
