@@ -36,7 +36,7 @@ class MLP(nn.Module):
         x = self.dropout(x)
         x = F.relu(self.fc2(x))
         x = self.dropout(x)
-        return F.softmax(self.fc3(x), dim=0)
+        return self.fc3(x)
 
 def dam(global_audio, global_video, audio, video, segments=10):
     """Dual-Attention Matching Module

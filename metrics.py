@@ -1,8 +1,6 @@
 import torch
 
 def localize(target_audio, target_video, query_audio, query_video, labels, device):
-    if torch.sum(labels) == 10:
-        return 1, 1
     # Global Video to Audio
     sims_to_audio = torch.zeros([10]).to(device)
     for j in range(10):
