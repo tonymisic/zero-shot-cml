@@ -1,6 +1,7 @@
 AVE_Dataset/
 savefiles/
 wandb/
+codes/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

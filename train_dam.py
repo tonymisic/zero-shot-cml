@@ -96,22 +96,12 @@ while epoch <= wandb.config['epochs']:
         video_global_sel = torch.mean(v_attention, dim=0)
         audio_global_sel = torch.mean(a_attention, dim=0)
         # classifier prediction
-        classifier_output = classifier(torch.cat([video_global_sel, audio_global_sel], dim=1)) # per sample class predictions [0 through 28]
-        # expand spatial prediction based on temporal prediction
-        expanded_spatial = torch.zeros([batch_size, 10, classifier_output.size(1)]).to(device)
-        for i in range(batch_size):
-            for j in range(10):
-                if temporal_preds[i][j] >= wandb.config['threshold']:
-                    expanded_spatial[i] = classifier_output[i]
-                elif temporal_preds[i][j] < wandb.config['threshold']:
-                    temp = torch.zeros([classifier_output.size(1)])
-                    temp[-1] = 1
-                    expanded_spatial[i] = temp
+        classifier_output = classifier(torch.cat([video_global_sel, audio_global_sel], dim=1))
         # calculate SEL accuracy
-        ground_truth = torch.argmax(spatial_labels, 2).flatten()
-        SEL_ACCURACY = float(torch.sum(torch.max(expanded_spatial.flatten(start_dim=0, end_dim=1), dim=1).indices == ground_truth)) / (10 * batch_size)
+        ground_truth = torch.min(torch.argmax(spatial_labels, 2), 1).values
+        SEL_ACCURACY = float(torch.sum(torch.min(torch.argmax(spatial_labels, 2), 1).values == ground_truth)) / (10 * batch_size)
         # Cross Entropy Loss per segment on spatial predictions
-        LOSS_SPATIAL = criterion(expanded_spatial.flatten(start_dim=0, end_dim=1), ground_truth)
+        LOSS_SPATIAL = criterion(classifier_output, ground_truth)
         ######### ------------------------------ LOSS AND RECORD ---------------------------------------- ###########
         # combine and apply losses as per equation 8
         LOSS = wandb.config['lambda'] * LOSS_SPATIAL + wandb.config['lambda'] * LOSS_TEMPORAL
@@ -144,55 +134,46 @@ while epoch <= wandb.config['epochs']:
     for video, audio, temporal_labels, spatial_labels, class_names, back_start, back_end in test_loader:
         if torch.sum(temporal_labels[0]) < 10:
             batch_size = video.size(0)
-            video, audio = torch.flatten(video, start_dim=2).to(device), audio.to(device)
+            optimizer_classifier.zero_grad(), optimizer_audio.zero_grad(), optimizer_video.zero_grad(), optimizer_guided.zero_grad()
+            video, local_audio = torch.flatten(video, start_dim=2).to(device), audio.to(device)
             spatial_labels, temporal_labels = spatial_labels.type(torch.LongTensor).to(device), temporal_labels.to(device)
             # audio-guided attention
             guided_video = torch.zeros([batch_size, 10, 128]).to(device)
             for i in range(batch_size):
                 for j in range(10):
-                    guided_video[i,j,:] = torch.dot(guided_model(video[i,j,:].clone(), audio[i,j,:].clone()), audio[i,j,:].clone())
-            # background removal for both audio and video
-            #trimmed_video = zero_pad_background(guided_video, back_start, back_end, temporal_labels)
-            #trimmed_audio = zero_pad_background(audio, back_start, back_end, temporal_labels)
-            # self-attetion on local audio and video features
-            a_attention, _ = audio_attention_model(guided_video.permute([1,0,2]))
-            v_attention, _ = video_attention_model(audio.permute([1,0,2]))
-            # global pooling of local features
-            video_global = torch.mean(v_attention, dim=0)
-            audio_global = torch.mean(a_attention, dim=0)
-            # classifier prediction
-            classifier_output = classifier(torch.cat([video_global, audio_global], dim=1))
+                    guided_video[i,j,:] = torch.dot(guided_model(video[i,j,:].clone(), local_audio[i,j,:].clone()), local_audio[i,j,:].clone())
+            ######### ------------------------------ CROSS MODAL LOCALIZATION ---------------------------------------- ###########
+            video_global_cml = torch.zeros([batch_size, 128]).to(device)
+            audio_global_cml = torch.zeros([batch_size, 128]).to(device)
+            for i in range(batch_size):
+                # background removal for both audio and video
+                query_video = remove_background(guided_video[i], int(back_start[i]), int(back_end[i]))
+                query_audio = remove_background(local_audio[i], int(back_start[i]), int(back_end[i]))
+                # use self-attention to sample audio and video
+                v_attention_cml, _ = video_attention_model(query_video.unsqueeze(0).permute([1,0,2]))
+                a_attention_cml, _ = audio_attention_model(query_audio.unsqueeze(0).permute([1,0,2]))
+                # mean to get global feature
+                video_global_cml[i] = torch.mean(v_attention_cml, dim=0)
+                audio_global_cml[i] = torch.mean(a_attention_cml, dim=0)
             # temporal predictions
             temporal_preds = torch.zeros(temporal_labels.size()).to(device)
-            for i in range(batch_size):
-                temporal_preds[i] = dam(audio_global[i], video_global[i], a_attention[:, i, :], v_attention[:, i, :])
-            ground_truth = torch.argmax(spatial_labels, 2).flatten()
-            # expand spatial prediction based on temporal prediction
-            expanded_spatial = torch.zeros([batch_size, 10, classifier_output.size(1)]).to(device)
-            for i in range(batch_size):
-                for j in range(10):
-                    if temporal_preds[i][j] >= wandb.config['threshold']:
-                        expanded_spatial[i] = classifier_output[i]
-                    elif temporal_preds[i][j] < wandb.config['threshold']:
-                        temp = torch.zeros([classifier_output.size(1)])
-                        temp[-1] = 1
-                        expanded_spatial[i] = temp
-            # calculate SEL accuracy
-            SEL_ACCURACY = float(torch.sum(torch.max(expanded_spatial.flatten(start_dim=0, end_dim=1), dim=1).indices == ground_truth)) / 10
-            # calculate CML accuracies
             V2A_accuracies, A2V_accuracies = torch.zeros([batch_size]), torch.zeros([batch_size])
             for i in range(batch_size):
-                query_video = remove_background(guided_video[i], int(back_start[i]), int(back_end[i]))
-                query_audio = remove_background(audio[i], int(back_start[i]), int(back_end[i]))
-                query_video, _ = video_attention_model(query_video.unsqueeze(0).permute([1,0,2]))
-                query_audio, _ = audio_attention_model(query_audio.unsqueeze(0).permute([1,0,2]))
-                temp_v_atten, _ = video_attention_model(guided_video[i].unsqueeze(0).permute([1,0,2]))
-                temp_a_atten, _ = audio_attention_model(audio[i].unsqueeze(0).permute([1,0,2]))
-                V2A_accuracies[i], A2V_accuracies[i] = localize(temp_a_atten.squeeze(1), temp_v_atten.squeeze(1), 
-                                                        torch.mean(query_audio.squeeze(1), dim=0).to(device), torch.mean(query_video.squeeze(1), dim=0).to(device), 
-                                                        temporal_labels[i], device)
-            # localize
-            A2V_ACCURACY, V2A_ACCURACY = float(torch.sum(A2V_accuracies)), float(torch.sum(V2A_accuracies))
+                V2A_accuracies[i], A2V_accuracies[i] = localize(local_audio[i], guided_video[i], audio_global_cml[i], video_global_cml[i], temporal_labels[i], device)
+                temporal_preds[i] = dam(audio_global_cml[i], video_global_cml[i], local_audio[i], guided_video[i])
+            A2V_ACCURACY, V2A_ACCURACY = float(torch.sum(A2V_accuracies)) / batch_size, float(torch.sum(V2A_accuracies)) / batch_size
+            ######### ------------------------------ SUPERVISED EVENT LOCALIZATION ---------------------------------------- ###########
+            # self-attetion on local audio and video features
+            a_attention, _ = audio_attention_model(guided_video.permute([1,0,2]))
+            v_attention, _ = video_attention_model(local_audio.permute([1,0,2]))
+            # global pooling of local features
+            video_global_sel = torch.mean(v_attention, dim=0)
+            audio_global_sel = torch.mean(a_attention, dim=0)
+            # classifier prediction
+            classifier_output = classifier(torch.cat([video_global_sel, audio_global_sel], dim=1))
+            # calculate SEL accuracy
+            ground_truth = torch.min(torch.argmax(spatial_labels, 2), 1).values
+            SEL_ACCURACY = float(torch.sum(torch.min(torch.argmax(spatial_labels, 2), 1).values == ground_truth)) / (10 * batch_size)
             # apply and record iteration
             batch += 1
             running_spatial += SEL_ACCURACY 
