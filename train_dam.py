@@ -1,4 +1,4 @@
-from models.dam import SelfAttention, AudioGuidedAttention, MLP, dam, remove_background, zero_pad_background
+from models.dam import SelfAttention, AudioGuidedAttention, MLP, dam, remove_background
 from dataloader import AVE
 from utils import GeneralizedZeroShot
 from metrics import localize
@@ -43,13 +43,14 @@ classifier = MLP(256, 29)
 #classifier.load_state_dict(torch.load('savefiles/classifier/epoch3.pth'))
 # losses
 criterion = torch.nn.CrossEntropyLoss()
+#event_criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([0.82]).to(device))
 event_criterion = torch.nn.BCEWithLogitsLoss()
 criterion.to(device), event_criterion.to(device)
 optimizer_classifier = optim.SGD(classifier.parameters(), lr=wandb.config['learning_rate'], momentum=0.9)
 optimizer_guided = optim.SGD(guided_model.parameters(), lr=wandb.config['learning_rate'], momentum=0.9)
 optimizer_video = optim.SGD(video_attention_model.parameters(), lr=wandb.config['learning_rate'], momentum=0.9)
 optimizer_audio = optim.SGD(audio_attention_model.parameters(), lr=wandb.config['learning_rate'], momentum=0.9)
-classifier.to(device), video_attention_model.to(device), audio_attention_model.to(device), guided_model.to(device)
+classifier.to(device), audio_attention_model.to(device), video_attention_model.to(device), guided_model.to(device)
 # training, seen testing, unseen validation
 epoch = wandb.config['starting_epoch']
 running_loss, run_temp, run_spat, iteration = 0.0, 0.0, 0.0, 0
@@ -87,11 +88,11 @@ while epoch <= wandb.config['epochs']:
             temporal_preds[i] = dam(audio_global_cml[i], video_global_cml[i], local_audio[i], guided_video[i])
         A2V_ACCURACY, V2A_ACCURACY = float(torch.sum(A2V_accuracies)) / batch_size, float(torch.sum(V2A_accuracies)) / batch_size
         # Binary Cross Entropy per segment on temporal predictions
-        LOSS_TEMPORAL = event_criterion(temporal_preds, temporal_labels)
+        LOSS_TEMPORAL = event_criterion(temporal_preds.round(), temporal_labels)
         ######### ------------------------------ SUPERVISED EVENT LOCALIZATION ---------------------------------------- ###########
         # self-attetion on local audio and video features
-        a_attention, _ = audio_attention_model(guided_video.permute([1,0,2]))
-        v_attention, _ = video_attention_model(local_audio.permute([1,0,2]))
+        a_attention, _ = audio_attention_model(local_audio.permute([1,0,2]))
+        v_attention, _ = video_attention_model(guided_video.permute([1,0,2]))
         # global pooling of local features
         video_global_sel = torch.mean(v_attention, dim=0)
         audio_global_sel = torch.mean(a_attention, dim=0)
@@ -99,7 +100,7 @@ while epoch <= wandb.config['epochs']:
         classifier_output = classifier(torch.cat([video_global_sel, audio_global_sel], dim=1))
         # calculate SEL accuracy
         ground_truth = torch.min(torch.argmax(spatial_labels, 2), 1).values
-        SEL_ACCURACY = float(torch.sum(torch.min(torch.argmax(spatial_labels, 2), 1).values == ground_truth)) / (10 * batch_size)
+        SEL_ACCURACY = float(torch.sum(torch.argmax(classifier_output, 1) == ground_truth)) / batch_size
         # Cross Entropy Loss per segment on spatial predictions
         LOSS_SPATIAL = criterion(classifier_output, ground_truth)
         ######### ------------------------------ LOSS AND RECORD ---------------------------------------- ###########
@@ -164,8 +165,8 @@ while epoch <= wandb.config['epochs']:
             A2V_ACCURACY, V2A_ACCURACY = float(torch.sum(A2V_accuracies)) / batch_size, float(torch.sum(V2A_accuracies)) / batch_size
             ######### ------------------------------ SUPERVISED EVENT LOCALIZATION ---------------------------------------- ###########
             # self-attetion on local audio and video features
-            a_attention, _ = audio_attention_model(guided_video.permute([1,0,2]))
-            v_attention, _ = video_attention_model(local_audio.permute([1,0,2]))
+            a_attention, _ = audio_attention_model(local_audio.permute([1,0,2]))
+            v_attention, _ = video_attention_model(guided_video.permute([1,0,2]))
             # global pooling of local features
             video_global_sel = torch.mean(v_attention, dim=0)
             audio_global_sel = torch.mean(a_attention, dim=0)
@@ -173,7 +174,7 @@ while epoch <= wandb.config['epochs']:
             classifier_output = classifier(torch.cat([video_global_sel, audio_global_sel], dim=1))
             # calculate SEL accuracy
             ground_truth = torch.min(torch.argmax(spatial_labels, 2), 1).values
-            SEL_ACCURACY = float(torch.sum(torch.min(torch.argmax(spatial_labels, 2), 1).values == ground_truth)) / (10 * batch_size)
+            SEL_ACCURACY = float(torch.sum(torch.argmax(classifier_output, 1) == ground_truth)) / batch_size
             # apply and record iteration
             batch += 1
             running_spatial += SEL_ACCURACY 

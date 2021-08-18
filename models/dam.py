@@ -44,13 +44,13 @@ def dam(global_audio, global_video, audio, video, segments=10):
     # Global Video to Audio
     pred_audio = torch.zeros([segments])
     for i in range(segments):
-        pred_audio[i] = torch.dot(global_video, audio[i])
+        pred_audio[i] = torch.sigmoid(torch.dot(global_video, audio[i]))
     # Global Audio to Video
     pred_video = torch.zeros([segments])
     for i in range(segments):
-        pred_video[i] = torch.dot(global_audio, video[i])
+        pred_video[i] = torch.sigmoid(torch.dot(global_audio, video[i]))
     # combine and return
-    return torch.div(torch.add(torch.sigmoid(pred_audio), torch.sigmoid(pred_video)), 2)
+    return torch.div(torch.add(pred_audio, pred_video), 2)
 
 def remove_background(tensor, start, end):
     return tensor[start:end, :]

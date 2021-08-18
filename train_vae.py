@@ -26,9 +26,9 @@ gzs.split_precomputed()
 # devices
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # loaders
-train_data = AVE('AVE_Dataset/', 'train', 'settings.json', precomputed=True, ZSL=True)
+train_data = AVE('AVE_Dataset/', 'train', 'settings.json', precomputed=True, ZSL=False)
 train_loader = DataLoader(train_data, wandb.config['batch_size'], shuffle=True, num_workers=3, pin_memory=True)
-test_data = AVE('AVE_Dataset/', 'test', 'settings.json', precomputed=True, ZSL=True)
+test_data = AVE('AVE_Dataset/', 'test', 'settings.json', precomputed=True, ZSL=False)
 test_loader = DataLoader(test_data, 1, shuffle=True, num_workers=1, pin_memory=True)
 # models
 audio_encode = audio_encoder(100)
