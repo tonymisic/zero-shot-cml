@@ -1,7 +1,7 @@
 from models.vae import audio_encoder, visual_encoder, VAE, general_decoder
 from dataloader import AVE
 from utils import GeneralizedZeroShot
-from metrics import reconstruction_localize
+from metrics import VAE_CML
 from torch.utils.data.dataloader import DataLoader
 import torch, wandb, torch.optim as optim 
 '''
@@ -26,10 +26,12 @@ gzs.split_precomputed()
 # devices
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # loaders
-train_data = AVE('AVE_Dataset/', 'train', 'settings.json', precomputed=True, ZSL=False)
+train_data = AVE('AVE_Dataset/', 'train', 'settings.json', precomputed=True, ZSL=True)
 train_loader = DataLoader(train_data, wandb.config['batch_size'], shuffle=True, num_workers=3, pin_memory=True)
-test_data = AVE('AVE_Dataset/', 'test', 'settings.json', precomputed=True, ZSL=False)
+test_data = AVE('AVE_Dataset/', 'test', 'settings.json', precomputed=True, ZSL=True)
 test_loader = DataLoader(test_data, 1, shuffle=True, num_workers=1, pin_memory=True)
+val_data = AVE('AVE_Dataset/', 'val', 'settings.json', precomputed=True, ZSL=True)
+val_loader = DataLoader(val_data, 1, shuffle=True, num_workers=1, pin_memory=True)
 # models
 audio_encode = audio_encoder(100)
 video_encode = visual_encoder(100)
@@ -68,8 +70,10 @@ while epoch <= wandb.config['epochs']:
         batch_size = video.size(0)
         optimizer_audio.zero_grad(), optimizer_video.zero_grad()
         # other work just ignores the 3rd and 4th dims, no clue why
-        video = torch.mean(video,dim=(2,3), keepdim=True).squeeze().to(device)
+        video = torch.mean(video,dim=(2,3)).to(device)
+        video /= torch.max(torch.abs(video)).to(device)
         audio = audio.to(device)
+        audio /= torch.max(torch.abs(audio)).to(device)
         flattened_video = torch.flatten(video, start_dim=0, end_dim=1).to(device)
         flattened_audio = torch.flatten(audio, start_dim=0, end_dim=1).to(device)
         spatial_labels, temporal_labels = spatial_labels.type(torch.LongTensor).to(device), temporal_labels.to(device)
@@ -81,7 +85,7 @@ while epoch <= wandb.config['epochs']:
         x_reconstruct_from_a, mu2, logvar2 = vae_audio(flattened_audio, vae_video)
         V2A_accuracies, A2V_accuracies = torch.zeros([batch_size]), torch.zeros([batch_size])
         for i in range(batch_size):
-            V2A_accuracies[i], A2V_accuracies[i] = reconstruction_localize(temporal_labels[i], vae_video, vae_audio, device, video[i], audio[i])
+            V2A_accuracies[i], A2V_accuracies[i] = VAE_CML(video[i], audio[i], temporal_labels[i], vae_audio, vae_video, device)
         A2V_ACCURACY, V2A_ACCURACY = float(torch.sum(A2V_accuracies)) / batch_size, float(torch.sum(V2A_accuracies)) / batch_size
         running_temporalV2A += V2A_ACCURACY
         running_temporalA2V += A2V_ACCURACY
@@ -115,11 +119,13 @@ while epoch <= wandb.config['epochs']:
             batch_size = video.size(0)
             optimizer_audio.zero_grad(), optimizer_video.zero_grad()
             # other work just ignores the 3rd and 4th dims, no clue why
-            video = torch.mean(video,dim=(2,3), keepdim=True).squeeze(2).squeeze(2).to(device)
+            video = torch.mean(video,dim=(2,3)).to(device)
+            video /= torch.max(torch.abs(video)).to(device)
             audio = audio.to(device)
+            audio /= torch.max(torch.abs(audio)).to(device)
             spatial_labels, temporal_labels = spatial_labels.type(torch.LongTensor).to(device), temporal_labels.to(device)
             # calculate scores
-            V2A_ACCURACY, A2V_ACCURACY = reconstruction_localize(temporal_labels[0], vae_video, vae_audio, device, video[0], audio[0])
+            V2A_ACCURACY, A2V_ACCURACY = VAE_CML(video[0], audio[0], temporal_labels[0], vae_audio, vae_video, device)
             # apply and record iteration
             batch += 1
             running_temporalV2A += V2A_ACCURACY
@@ -133,6 +139,25 @@ while epoch <= wandb.config['epochs']:
         print("Saved Models for Epoch:" + str(epoch))
     wandb.log({"Testing A2V": running_temporalA2V / batch})
     wandb.log({"Testing V2A": running_temporalV2A / batch})
+    ### --------------- UNSEEN VAL --------------- ###
+    running_temporalV2A, running_temporalA2V, batch = 0.0, 0.0, 0
+    for video, audio, temporal_labels, spatial_labels, class_names, back_start, back_end in val_loader:
+        if torch.sum(temporal_labels[0]) < 10:
+            batch_size = video.size(0)
+            # other work just ignores the 3rd and 4th dims, no clue why
+            video = torch.mean(video,dim=(2,3)).to(device)
+            video[0] /= torch.max(torch.abs(video[0])).to(device)
+            audio = audio.to(device)
+            audio[0] /= torch.max(torch.abs(audio[0])).to(device)
+            spatial_labels, temporal_labels = spatial_labels.type(torch.LongTensor).to(device), temporal_labels.to(device)
+            # calculate scores
+            V2A_ACCURACY, A2V_ACCURACY = VAE_CML(video[0], audio[0], temporal_labels[0], vae_audio, vae_video, device)
+            # apply and record iteration
+            batch += 1
+            running_temporalV2A += V2A_ACCURACY
+            running_temporalA2V += A2V_ACCURACY
+    wandb.log({"Zero-Shot A2V": running_temporalA2V / batch})
+    wandb.log({"Zero-Shot V2A": running_temporalV2A / batch})
     epoch += 1
     print("Epoch: " + str(epoch - 1) + " finished!")
 print("Finished, finished.")

@@ -26,29 +26,51 @@ def max_contiguos_sum(similarities, labels, device):
     else:
         return 0
 
-def reconstruction_localize(labels, vae_video, vae_audio, device, video, audio):
-    length = int(torch.sum(labels))
-    sims_to_video, sims_to_audio = torch.zeros([10 - length + 1]).to(device), torch.zeros([10 - length + 1]).to(device)
-    for i in range(10 - length + 1):
-        with torch.no_grad():
-            reconstructed_audio, mu1, _ = vae_video(video[labels == 1, :], vae_audio) # query
-            reconstructed_video, mu2, _ = vae_audio(audio[i + length - 1, :], vae_video) # target
-            loss1, loss2 = torch.dist(mu1, mu2, 2), torch.dist(reconstructed_audio, reconstructed_video, 2)
-        sims_to_audio[i] = loss1.item() * 0.5 + loss2.item() * 0.5
-        with torch.no_grad():
-            reconstructed_audio, mu1, _ = vae_video(video[i + length - 1, :], vae_audio) # query
-            reconstructed_video, mu2, _ = vae_audio(audio[labels == 1, :], vae_video) # target
-            loss1, loss2 = torch.dist(mu1, mu2, 2), torch.dist(reconstructed_audio, reconstructed_video, 2)
-        sims_to_video[i] = loss1.item() * 0.5 + loss2.item() * 0.5
-    v2a, a2v = min_contiguos_sum(sims_to_audio, labels, device), min_contiguos_sum(sims_to_video, labels, device)
-    return v2a, a2v
+def test_cmm_a2v(video_feature, audio_feature, vae_video, vae_audio):
+	with torch.no_grad():
+		reconstructed_audio, mu1, _ = vae_video(video_feature, vae_audio)
+		reconstructed_video, mu2, _ = vae_audio(audio_feature, vae_video)
+		loss1 = torch.dist(mu1,mu2, 2)
+		loss2 = torch.dist(reconstructed_audio, reconstructed_video)
+	return loss1.item() * 0.5 + loss2.item() * 0.5
 
-def min_contiguos_sum(similarities, labels, device):
-    length = int(torch.sum(labels))
-    start = torch.argmin(similarities)
-    prediction = torch.zeros([10]).to(device)
-    prediction[start:start + length] = 1
-    if torch.equal(prediction, labels):
-        return 1
-    else:
-        return 0
+def test_cmm_v2a(video_feature, audio_feature, vae_video, vae_audio):
+	with torch.no_grad():
+		reconstructed_audio, mu1, _ = vae_video(video_feature, vae_audio)
+		reconstructed_video, mu2, _ = vae_audio(audio_feature, vae_video)
+		loss1 = torch.dist(mu1,mu2, 2)
+		loss2 = torch.dist(reconstructed_audio, reconstructed_video, 2)
+	return  loss1.item() * 0.5 + loss2.item() * 0.5 
+
+def VAE_CML(video, audio, temporal_label, vae_audio, vae_video, device):
+    v2a, a2v = 0, 0
+    l = int(torch.sum(temporal_label))
+    start_idx = torch.argmax(temporal_label)
+    seg = torch.zeros([l]).type(torch.LongTensor)
+    for i in range(l):
+        seg[i] = int(start_idx + i)
+    # given audio clip
+    score = torch.zeros([10 - l + 1])
+    for nn_count in range(10 - l + 1):
+        s = 0
+        for i in range(l):
+            s += test_cmm_a2v(video[nn_count + i:nn_count + i + 1, :], audio[seg[i:i + 1], :], vae_video, vae_audio)
+        score[nn_count] = s
+    min_id = int(torch.argmin(score))
+    pred_aud = torch.zeros([10])
+    pred_aud[min_id : min_id + int(l)] = 1
+    if torch.equal(pred_aud.to(device), temporal_label):
+        v2a = 1
+    # given video clip
+    score = torch.zeros([10 - l + 1])
+    for nn_count in range(10 - l + 1):
+        s = 0
+        for i in range(l):
+            s += test_cmm_v2a(video[seg[i:i + 1], :], audio[nn_count + i:nn_count + i + 1, :], vae_video, vae_audio)
+        score[nn_count] = s
+    min_id = int(torch.argmin(score))
+    pred_vid = torch.zeros([10])
+    pred_vid[min_id : min_id + int(l)] = 1
+    if torch.equal(pred_vid.to(device), temporal_label):
+        a2v = 1
+    return v2a, a2v
