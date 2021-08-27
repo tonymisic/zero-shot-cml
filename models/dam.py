@@ -13,15 +13,45 @@ class SelfAttention(torch.nn.Module):
 class AudioGuidedAttention(torch.nn.Module):
     """Visual Attention guided by audio input, from AVE/DMRN Paper
     """
-    def __init__(self, input=128, output=128, linear_in=25088):
+    def __init__(self, linear_in=512):
         super(AudioGuidedAttention, self).__init__()
-        self.video_linear = torch.nn.Linear(linear_in, output)
-        self.audio_linear = torch.nn.Linear(input, output)
-        self.fc3 = torch.nn.Linear(output, output)
+        self.video_linear = torch.nn.Linear(linear_in, 512)
+        self.audio_linear = torch.nn.Linear(128, 512)
+        self.fc3 = torch.nn.Linear(512, 128)
+
     def forward(self, video, audio):
+        original_video = video
         video = F.relu(self.video_linear(video))
         audio = F.relu(self.audio_linear(audio))
-        return F.softmax(self.fc3(torch.tanh(video + audio)), dim=0)
+        return torch.multiply(original_video, F.softmax(torch.tanh(video + audio), dim=-1))
+
+class AudioGuidedAttentionFromPaper(torch.nn.Module):
+    """Visual Attention guided by audio input, from AVE/DMRN Paper
+    """
+    def __init__(self, linear_in=512):
+        super(AudioGuidedAttentionFromPaper, self).__init__()
+        self.relu = nn.ReLU()
+        self.affine_audio = nn.Linear(128, linear_in)
+        self.affine_video = nn.Linear(512, linear_in)
+        self.affine_v = nn.Linear(linear_in, 49, bias=False)
+        self.affine_g = nn.Linear(linear_in, 49, bias=False)
+        self.affine_h = nn.Linear(49, 1, bias=False)
+
+    def forward(self, video, audio):
+        v_t = video.view(video.size(0) * video.size(1), -1, 512)
+        V = v_t
+
+        # Audio-guided visual attention
+        v_t = self.relu(self.affine_video(v_t))
+        a_t = audio.view(-1, audio.size(-1))
+        a_t = self.relu(self.affine_audio(a_t))
+        content_v = self.affine_v(v_t) \
+                    + self.affine_g(a_t).unsqueeze(2)
+        z_t = self.affine_h((torch.tanh(content_v))).squeeze(2)
+        alpha_t = F.softmax(z_t, dim=-1).view(z_t.size(0), -1, z_t.size(1)) # attention map
+        c_t = torch.bmm(alpha_t, V).view(-1, 512)
+        video_t = c_t.view(video.size(0), -1, 512) # attended visual features
+        return video_t
 
 class MLP(nn.Module):
     def __init__(self, input, output):
