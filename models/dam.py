@@ -4,11 +4,16 @@ import torch.nn.functional as F
 class SelfAttention(torch.nn.Module):
     """Self-Attention Module
     """
-    def __init__(self, embed_dim, heads=1):
+    def __init__(self, embed_dim, heads=1, video=False):
         super(SelfAttention, self).__init__()
         self.attention = torch.nn.MultiheadAttention(embed_dim, heads)
+        self.video = video
+        self.video_layer = torch.nn.Linear(embed_dim, 128)
     def forward(self, x):
-        return self.attention(x, x, x)
+        if self.video:
+            return self.video_layer(self.attention(x, x, x))
+        else:
+            return self.attention(x, x, x)
 
 class AudioGuidedAttention(torch.nn.Module):
     """Visual Attention guided by audio input, from AVE/DMRN Paper

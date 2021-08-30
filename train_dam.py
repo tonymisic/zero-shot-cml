@@ -1,4 +1,4 @@
-from models.dam import SelfAttention, AudioGuidedAttentionFromPaper, AudioGuidedAttention, MLP, dam, remove_background
+from models.dam import SelfAttention, AudioGuidedAttention, MLP, dam, remove_background
 from dataloader import AVE
 from utils import GeneralizedZeroShot
 from metrics import localize
@@ -35,7 +35,7 @@ test_loader = DataLoader(test_data, 1, shuffle=True, num_workers=1, pin_memory=T
 # models
 audio_attention_model = SelfAttention(128)
 #audio_attention_model.load_state_dict(torch.load('savefiles/audio/epoch3.pth'))
-video_attention_model = SelfAttention(512)
+video_attention_model = SelfAttention(512, video=True)
 #video_attention_model.load_state_dict(torch.load('savefiles/video/epoch3.pth'))
 guided_model = AudioGuidedAttention(linear_in=512)
 #guided_model.load_state_dict(torch.load('savefiles/guided/epoch3.pth'))
@@ -46,10 +46,10 @@ classifier.to(device), audio_attention_model.to(device), video_attention_model.t
 criterion = torch.nn.CrossEntropyLoss()
 event_criterion = torch.nn.BCELoss()
 criterion.to(device), event_criterion.to(device)
-optimizer_classifier = optim.SGD(classifier.parameters(), lr=wandb.config['learning_rate'], momentum=0.9)
-optimizer_guided = optim.SGD(guided_model.parameters(), lr=wandb.config['learning_rate'], momentum=0.9)
-optimizer_video = optim.SGD(video_attention_model.parameters(), lr=wandb.config['learning_rate'], momentum=0.9)
-optimizer_audio = optim.SGD(audio_attention_model.parameters(), lr=wandb.config['learning_rate'], momentum=0.9)
+optimizer_classifier = optim.Adam(classifier.parameters(), lr=wandb.config['learning_rate'])
+optimizer_guided = optim.Adam(guided_model.parameters(), lr=wandb.config['learning_rate'])
+optimizer_video = optim.Adam(video_attention_model.parameters(), lr=wandb.config['learning_rate'])
+optimizer_audio = optim.Adam(audio_attention_model.parameters(), lr=wandb.config['learning_rate'])
 # epochs
 epoch = wandb.config['starting_epoch']
 running_loss, run_temp, run_spat, iteration = 0.0, 0.0, 0.0, 0
