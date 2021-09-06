@@ -1,9 +1,12 @@
-from models.dam import SelfAttention, AudioGuidedAttention, MLP, dam, remove_background
+from models.dam import SelfAttention, AudioGuidedAttention, MLP, AdjustAudio, AdjustVideo, dam, remove_background
 from dataloader import AVE
 from utils import GeneralizedZeroShot
 from metrics import localize
 from torch.utils.data.dataloader import DataLoader
 import torch, wandb, torch.optim as optim 
+import os
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID" 
+os.environ["CUDA_VISIBLE_DEVICES"]="2"
 '''
 Main training script
 '''
@@ -26,39 +29,45 @@ wandb.init(project="DAM Baseline",
 gzs = GeneralizedZeroShot('AVE_Dataset/', precomputed=True)
 gzs.split_precomputed()
 # devices
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # loaders
 train_data = AVE('AVE_Dataset/', 'train', 'settings.json', precomputed=True, ZSL=False)
 train_loader = DataLoader(train_data, wandb.config['batch_size'], shuffle=True, num_workers=3, pin_memory=True)
 test_data = AVE('AVE_Dataset/', 'test', 'settings.json', precomputed=True, ZSL=False)
-test_loader = DataLoader(test_data, 1, shuffle=True, num_workers=1, pin_memory=True)
+test_loader = DataLoader(test_data, 3, shuffle=True, num_workers=1, pin_memory=True)
 # models
-audio_attention_model = SelfAttention(128)
-#audio_attention_model.load_state_dict(torch.load('savefiles/audio/epoch3.pth'))
-video_attention_model = SelfAttention(512, video=True)
-#video_attention_model.load_state_dict(torch.load('savefiles/video/epoch3.pth'))
+audio_attention_model = SelfAttention(256)
+audio_attention_model.load_state_dict(torch.load('savefiles/audio/epoch600.pth'))
+video_attention_model = SelfAttention(256, video=True)
+video_attention_model.load_state_dict(torch.load('savefiles/video/epoch600.pth'))
 guided_model = AudioGuidedAttention(linear_in=512)
-#guided_model.load_state_dict(torch.load('savefiles/guided/epoch3.pth'))
-classifier = MLP(256, 29)
-#classifier.load_state_dict(torch.load('savefiles/classifier/epoch3.pth'))
+guided_model.load_state_dict(torch.load('savefiles/guided/epoch600.pth'))
+classifier = MLP(512, 29)
+classifier.load_state_dict(torch.load('savefiles/classifier/epoch600.pth'))
+video_linear, audio_linear = AdjustVideo(), AdjustAudio()
 classifier.to(device), audio_attention_model.to(device), video_attention_model.to(device), guided_model.to(device)
+video_linear.to(device), audio_linear.to(device)
 # losses
 criterion = torch.nn.CrossEntropyLoss()
 event_criterion = torch.nn.BCELoss()
 criterion.to(device), event_criterion.to(device)
-optimizer_classifier = optim.Adam(classifier.parameters(), lr=wandb.config['learning_rate'])
-optimizer_guided = optim.Adam(guided_model.parameters(), lr=wandb.config['learning_rate'])
-optimizer_video = optim.Adam(video_attention_model.parameters(), lr=wandb.config['learning_rate'])
-optimizer_audio = optim.Adam(audio_attention_model.parameters(), lr=wandb.config['learning_rate'])
+optimizer_classifier = optim.SGD(classifier.parameters(), lr=wandb.config['learning_rate'], momentum=0.9)
+optimizer_guided = optim.SGD(guided_model.parameters(), lr=wandb.config['learning_rate'], momentum=0.9)
+optimizer_video = optim.SGD(video_attention_model.parameters(), lr=wandb.config['learning_rate'], momentum=0.9)
+optimizer_audio = optim.SGD(audio_attention_model.parameters(), lr=wandb.config['learning_rate'], momentum=0.9)
+opti_lin_v = optim.SGD(video_linear.parameters(), lr=wandb.config['learning_rate'], momentum=0.9)
+opti_lin_a = optim.SGD(audio_linear.parameters(), lr=wandb.config['learning_rate'], momentum=0.9)
 # epochs
 epoch = wandb.config['starting_epoch']
 running_loss, run_temp, run_spat, iteration = 0.0, 0.0, 0.0, 0
 while epoch <= wandb.config['epochs']:
     ### --------------- TRAIN --------------- ###
-    running_spatial, running_temporalV2A, running_temporalA2V, running_temporal, running_classification, batch = 0.0, 0.0, 0.0, 0.0, 0.0, 0
+    running_spatial, running_temporalV2A, running_temporalA2V, running_temporal, running_classification, batch = 0.0, 0.0, 0.0, 0.0, 0.0, 1
     for video, audio, temporal_labels, spatial_labels, class_names, back_start, back_end in train_loader:
+        break
         batch_size = video.size(0)
         optimizer_classifier.zero_grad(), optimizer_audio.zero_grad(), optimizer_video.zero_grad(), optimizer_guided.zero_grad()
+        opti_lin_v.zero_grad(), opti_lin_a.zero_grad()
         video, local_audio = torch.mean(video, dim=(2,3)).to(device), audio.to(device)
         spatial_labels, temporal_labels = spatial_labels.type(torch.LongTensor).to(device), temporal_labels.to(device)
         # audio-guided attention
@@ -66,6 +75,8 @@ while epoch <= wandb.config['epochs']:
         for i in range(batch_size):
             for j in range(10):
                 guided_video[i,j,:] = guided_model(video[i,j,:].clone(), local_audio[i,j,:].clone())
+        local_audio = audio_linear(local_audio).to(device)
+        guided_video = video_linear(guided_video).to(device)
         # self-attention on local audio and video features
         a_attention, _ = audio_attention_model(local_audio.permute([1,0,2]))
         v_attention, _ = video_attention_model(guided_video.permute([1,0,2]))
@@ -73,8 +84,8 @@ while epoch <= wandb.config['epochs']:
         video_global_sel = torch.mean(v_attention, dim=0)
         audio_global_sel = torch.mean(a_attention, dim=0)
         ######### ------------------------------ CROSS MODAL LOCALIZATION ---------------------------------------- ###########
-        video_global_cml = torch.zeros([batch_size, 128]).to(device)
-        audio_global_cml = torch.zeros([batch_size, 128]).to(device)
+        video_global_cml = torch.zeros([batch_size, 256]).to(device)
+        audio_global_cml = torch.zeros([batch_size, 256]).to(device)
         for i in range(batch_size):
             # background removal for both audio and video
             query_video = remove_background(guided_video[i], int(back_start[i]), int(back_end[i]))
@@ -90,7 +101,7 @@ while epoch <= wandb.config['epochs']:
         V2A_accuracies, A2V_accuracies = torch.zeros([batch_size]), torch.zeros([batch_size])
         for i in range(batch_size):
             V2A_accuracies[i], A2V_accuracies[i] = localize(local_audio[i], guided_video[i], audio_global_cml[i], video_global_cml[i], temporal_labels[i], device)
-            temporal_preds[i] = dam(audio_global_sel[i], video_global_sel[i], local_audio[i], guided_video[i])
+            temporal_preds[i] = dam(audio_global_cml[i], video_global_cml[i], local_audio[i], guided_video[i])
         A2V_ACCURACY, V2A_ACCURACY = float(torch.sum(A2V_accuracies)) / batch_size, float(torch.sum(V2A_accuracies)) / batch_size
         TEMPORAL_ACC = float(torch.sum(temporal_preds.round() == temporal_labels)) / (batch_size * 10)
         # Binary Cross Entropy per segment on temporal predictions
@@ -118,6 +129,7 @@ while epoch <= wandb.config['epochs']:
         LOSS = wandb.config['lambda'] * LOSS_SPATIAL + wandb.config['lambda'] * LOSS_TEMPORAL
         LOSS.backward()
         optimizer_classifier.step(), optimizer_audio.step(), optimizer_video.step(), optimizer_guided.step()
+        opti_lin_a.step(), opti_lin_v.step()
         # apply and record iteration
         batch += 1
         iteration += 1
@@ -152,19 +164,21 @@ while epoch <= wandb.config['epochs']:
             video, local_audio = torch.mean(video, dim=(2,3)).to(device), audio.to(device)
             spatial_labels, temporal_labels = spatial_labels.type(torch.LongTensor).to(device), temporal_labels.to(device)
             # audio-guided attention
-            guided_video = torch.zeros([batch_size, 10, 128]).to(device)
+            guided_video = torch.zeros([batch_size, 10, 512]).to(device)
             for i in range(batch_size):
                 for j in range(10):
                     guided_video[i,j,:] = guided_model(video[i,j,:].clone(), local_audio[i,j,:].clone())
-            # self-attetion on local audio and video features
+            local_audio = audio_linear(local_audio).to(device)
+            guided_video = video_linear(guided_video).to(device)
+            # self-attention on local audio and video features
             a_attention, _ = audio_attention_model(local_audio.permute([1,0,2]))
             v_attention, _ = video_attention_model(guided_video.permute([1,0,2]))
             # global pooling of local features
             video_global_sel = torch.mean(v_attention, dim=0)
             audio_global_sel = torch.mean(a_attention, dim=0)
             ######### ------------------------------ CROSS MODAL LOCALIZATION ---------------------------------------- ###########
-            video_global_cml = torch.zeros([batch_size, 128]).to(device)
-            audio_global_cml = torch.zeros([batch_size, 128]).to(device)
+            video_global_cml = torch.zeros([batch_size, 256]).to(device)
+            audio_global_cml = torch.zeros([batch_size, 256]).to(device)
             for i in range(batch_size):
                 # background removal for both audio and video
                 query_video = remove_background(guided_video[i], int(back_start[i]), int(back_end[i]))
@@ -180,7 +194,7 @@ while epoch <= wandb.config['epochs']:
             V2A_accuracies, A2V_accuracies = torch.zeros([batch_size]), torch.zeros([batch_size])
             for i in range(batch_size):
                 V2A_accuracies[i], A2V_accuracies[i] = localize(local_audio[i], guided_video[i], audio_global_cml[i], video_global_cml[i], temporal_labels[i], device)
-                temporal_preds[i] = dam(audio_global_sel[i], video_global_sel[i], local_audio[i], guided_video[i])
+                temporal_preds[i] = dam(audio_global_cml[i], video_global_cml[i], local_audio[i], guided_video[i])
             A2V_ACCURACY, V2A_ACCURACY = float(torch.sum(A2V_accuracies)) / batch_size, float(torch.sum(V2A_accuracies)) / batch_size
             TEMPORAL_ACC = float(torch.sum(temporal_preds.round() == temporal_labels)) / (batch_size * 10)
             ######### ------------------------------ SUPERVISED EVENT LOCALIZATION ---------------------------------------- ###########

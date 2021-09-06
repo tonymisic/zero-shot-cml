@@ -1,4 +1,13 @@
 import torch
+import torch.nn.functional as F
+def max_similarity(query, target, event_start):
+    sims = []
+    for i in range(target.size(0)):
+        sims.append(F.cosine_similarity(query, target[i], dim=0))
+    if int(event_start) == sims.index(max(sims)):
+        return 1
+    else:
+        return 0
 
 def localize(target_audio, target_video, query_audio, query_video, labels, device):
     # Global Video to Audio
