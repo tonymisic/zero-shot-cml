@@ -8,6 +8,14 @@ def create_positives(starts):
         labels[i] = temp
     return labels
 
+def create_mask(starts):
+    labels = torch.zeros([starts.size(0), 10])
+    for i in range(starts.size(0)):
+        temp = torch.zeros([10])
+        temp[starts[i]] = 1
+        labels[i] = temp
+    return labels
+
 def load_info(filename):
     '''(string) root_dir: root directory of dataset
     (string) filename: .txt file of data annotations

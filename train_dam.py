@@ -12,7 +12,7 @@ Main training script
 '''
 wandb.init(project="DAM Baseline",
     config={
-        "task": "Standard CML",
+        "task": "ZSL",
         "learning_rate": 0.01,
         "dataset": "AVE",
         "device": "GTX1080",
@@ -21,7 +21,7 @@ wandb.init(project="DAM Baseline",
         "batch_size": 21,
         "threshold": 0.5,
         "lambda": 0.5,
-        "eval_classes": [0,1,2,3,4],
+        "eval_classes": [5, 6, 7, 8, 9],
         "testSplit": 0.8
     }
 )
@@ -31,10 +31,12 @@ gzs.split_precomputed()
 # devices
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # loaders
-train_data = AVE('AVE_Dataset/', 'train', 'settings.json', precomputed=True, ZSL=False)
+train_data = AVE('AVE_Dataset/', 'train', 'settings.json', precomputed=True, ZSL=True)
 train_loader = DataLoader(train_data, wandb.config['batch_size'], shuffle=True, num_workers=3, pin_memory=True)
-test_data = AVE('AVE_Dataset/', 'test', 'settings.json', precomputed=True, ZSL=False)
-test_loader = DataLoader(test_data, 3, shuffle=True, num_workers=1, pin_memory=True)
+test_data = AVE('AVE_Dataset/', 'test', 'settings.json', precomputed=True, ZSL=True)
+test_loader = DataLoader(test_data, 1, shuffle=True, num_workers=1, pin_memory=True)
+val_data = AVE('AVE_Dataset/', 'val', 'settings.json', precomputed=True, ZSL=True)
+val_loader = DataLoader(val_data, 1, shuffle=True, num_workers=1, pin_memory=True)
 # models
 audio_attention_model = SelfAttention(256)
 audio_attention_model.load_state_dict(torch.load('savefiles/audio/epoch600.pth'))
@@ -64,7 +66,6 @@ while epoch <= wandb.config['epochs']:
     ### --------------- TRAIN --------------- ###
     running_spatial, running_temporalV2A, running_temporalA2V, running_temporal, running_classification, batch = 0.0, 0.0, 0.0, 0.0, 0.0, 1
     for video, audio, temporal_labels, spatial_labels, class_names, back_start, back_end in train_loader:
-        break
         batch_size = video.size(0)
         optimizer_classifier.zero_grad(), optimizer_audio.zero_grad(), optimizer_video.zero_grad(), optimizer_guided.zero_grad()
         opti_lin_v.zero_grad(), opti_lin_a.zero_grad()
@@ -145,6 +146,7 @@ while epoch <= wandb.config['epochs']:
         wandb.log({"Combined Loss": running_loss / iteration})
         wandb.log({"Temporal Loss": run_temp / iteration})
         wandb.log({"Spatial Loss": run_spat / iteration})
+    print("Samples: " + str(batch))
     wandb.log({"Training A2V": running_temporalA2V / batch})
     wandb.log({"Training V2A": running_temporalV2A / batch})
     wandb.log({"Training SEL": running_spatial / batch})
@@ -220,7 +222,78 @@ while epoch <= wandb.config['epochs']:
             running_temporalV2A += V2A_ACCURACY
             running_temporalA2V += A2V_ACCURACY
             running_temporal += TEMPORAL_ACC
-            wandb.log({"batch": batch})
+    print("Samples: " + str(batch))
+    wandb.log({"Testing A2V": running_temporalA2V / batch})
+    wandb.log({"Testing V2A": running_temporalV2A / batch})
+    wandb.log({"Testing SEL": running_spatial / batch})
+    wandb.log({"Testing Classification": running_classification / batch})
+    wandb.log({"Testing Temporal": running_temporal / batch})
+    ### --------------- TEST --------------- ###
+    running_spatial, running_temporalV2A, running_temporalA2V, running_temporal, running_classification, batch = 0.0, 0.0, 0.0, 0.0, 0.0, 0
+    for video, audio, temporal_labels, spatial_labels, class_names, back_start, back_end in val_loader:
+        if torch.sum(temporal_labels[0]) < 10:
+            batch_size = video.size(0)
+            optimizer_classifier.zero_grad(), optimizer_audio.zero_grad(), optimizer_video.zero_grad(), optimizer_guided.zero_grad()
+            video, local_audio = torch.mean(video, dim=(2,3)).to(device), audio.to(device)
+            spatial_labels, temporal_labels = spatial_labels.type(torch.LongTensor).to(device), temporal_labels.to(device)
+            # audio-guided attention
+            guided_video = torch.zeros([batch_size, 10, 512]).to(device)
+            for i in range(batch_size):
+                for j in range(10):
+                    guided_video[i,j,:] = guided_model(video[i,j,:].clone(), local_audio[i,j,:].clone())
+            local_audio = audio_linear(local_audio).to(device)
+            guided_video = video_linear(guided_video).to(device)
+            # self-attention on local audio and video features
+            a_attention, _ = audio_attention_model(local_audio.permute([1,0,2]))
+            v_attention, _ = video_attention_model(guided_video.permute([1,0,2]))
+            # global pooling of local features
+            video_global_sel = torch.mean(v_attention, dim=0)
+            audio_global_sel = torch.mean(a_attention, dim=0)
+            ######### ------------------------------ CROSS MODAL LOCALIZATION ---------------------------------------- ###########
+            video_global_cml = torch.zeros([batch_size, 256]).to(device)
+            audio_global_cml = torch.zeros([batch_size, 256]).to(device)
+            for i in range(batch_size):
+                # background removal for both audio and video
+                query_video = remove_background(guided_video[i], int(back_start[i]), int(back_end[i]))
+                query_audio = remove_background(local_audio[i], int(back_start[i]), int(back_end[i]))
+                # use self-attention to sample audio and video
+                v_attention_cml, _ = video_attention_model(query_video.unsqueeze(0).permute([1,0,2]))
+                a_attention_cml, _ = audio_attention_model(query_audio.unsqueeze(0).permute([1,0,2]))
+                # mean to get global feature
+                video_global_cml[i] = torch.mean(v_attention_cml, dim=0)
+                audio_global_cml[i] = torch.mean(a_attention_cml, dim=0)
+            # temporal predictions
+            temporal_preds = torch.zeros(temporal_labels.size()).to(device)
+            V2A_accuracies, A2V_accuracies = torch.zeros([batch_size]), torch.zeros([batch_size])
+            for i in range(batch_size):
+                V2A_accuracies[i], A2V_accuracies[i] = localize(local_audio[i], guided_video[i], audio_global_cml[i], video_global_cml[i], temporal_labels[i], device)
+                temporal_preds[i] = dam(audio_global_cml[i], video_global_cml[i], local_audio[i], guided_video[i])
+            A2V_ACCURACY, V2A_ACCURACY = float(torch.sum(A2V_accuracies)) / batch_size, float(torch.sum(V2A_accuracies)) / batch_size
+            TEMPORAL_ACC = float(torch.sum(temporal_preds.round() == temporal_labels)) / (batch_size * 10)
+            ######### ------------------------------ SUPERVISED EVENT LOCALIZATION ---------------------------------------- ###########
+            # classifier prediction
+            classifier_output = classifier(torch.cat([video_global_sel, audio_global_sel], dim=1))
+            # calculate category accuracy and SEL
+            gt_classes = torch.min(torch.argmax(spatial_labels, 2), 1).values.to(device)
+            ground_truth = torch.argmax(spatial_labels, 2).to(device)
+            spatial_pred = torch.argmax(classifier_output, 1).to(device)
+            expanded_spatial = torch.zeros(temporal_preds.size()).to(device)
+            for i in range(batch_size):
+                for j in range(expanded_spatial.size(1)):
+                    if temporal_preds[i][j] >= wandb.config['threshold']:
+                        expanded_spatial[i][j] = spatial_pred[i]
+                    else:
+                        expanded_spatial[i][j] = 28
+            SEL_ACCURACY = float(torch.sum(expanded_spatial == ground_truth)) / (batch_size * 10)
+            CLASSIFICATION_ACCURACY = float(torch.sum(spatial_pred == gt_classes)) / batch_size
+            # apply and record iteration
+            batch += 1
+            running_spatial += SEL_ACCURACY
+            running_classification += CLASSIFICATION_ACCURACY 
+            running_temporalV2A += V2A_ACCURACY
+            running_temporalA2V += A2V_ACCURACY
+            running_temporal += TEMPORAL_ACC
+    print("Samples: " + str(batch))
     wandb.log({"Testing A2V": running_temporalA2V / batch})
     wandb.log({"Testing V2A": running_temporalV2A / batch})
     wandb.log({"Testing SEL": running_spatial / batch})

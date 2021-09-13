@@ -1,9 +1,10 @@
 import torch
 import torch.nn.functional as F
-def max_similarity(query, target, event_start):
+def max_similarity(query, target, event_start, sim='cosine'):
     sims = []
     for i in range(target.size(0)):
-        sims.append(F.cosine_similarity(query, target[i], dim=0))
+        if sim == 'cosine':
+           sims.append(F.cosine_similarity(query, target[i], dim=0))
     if int(event_start) == sims.index(max(sims)):
         return 1
     else:

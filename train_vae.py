@@ -1,9 +1,10 @@
-from models.vae import audio_encoder, visual_encoder, VAE, general_decoder
-from dataloader import AVE
+from torch.autograd import Variable
+import numpy as np, torch.optim as optim, torch.utils.data, h5py, wandb, torch.nn as nn, torch, json
+from models.vae import *
 from utils import GeneralizedZeroShot
-from metrics import VAE_CML
-from torch.utils.data.dataloader import DataLoader
-import torch, wandb, torch.optim as optim 
+import os
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID" 
+os.environ["CUDA_VISIBLE_DEVICES"]="2"
 '''
 Main training script
 '''
@@ -13,151 +14,179 @@ wandb.init(project="VAE Baseline",
         "learning_rate": 0.00001,
         "dataset": "AVE",
         "device": "GTX1080",
-        "epochs": 999,
+        "epochs": 15,
         "starting_epoch" : 0,
-        "batch_size": 21,
+        "batch_size": 10,
         "eval_classes": [0,1,2,3,4],
         "testSplit": 0.8
     }
 )
-# splitting
+# splittings
+settings = json.load(open('settings.json'))
+rootdir = 'AVE_Dataset/'
 gzs = GeneralizedZeroShot('AVE_Dataset/', precomputed=True)
 gzs.split_precomputed()
-# devices
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-# loaders
-train_data = AVE('AVE_Dataset/', 'train', 'settings.json', precomputed=True, ZSL=True)
-train_loader = DataLoader(train_data, wandb.config['batch_size'], shuffle=True, num_workers=3, pin_memory=True)
-test_data = AVE('AVE_Dataset/', 'test', 'settings.json', precomputed=True, ZSL=True)
-test_loader = DataLoader(test_data, 1, shuffle=True, num_workers=1, pin_memory=True)
-val_data = AVE('AVE_Dataset/', 'val', 'settings.json', precomputed=True, ZSL=True)
-val_loader = DataLoader(val_data, 1, shuffle=True, num_workers=1, pin_memory=True)
-# models
-audio_encode = audio_encoder(100)
-video_encode = visual_encoder(100)
-general_decode = general_decoder(100)
-vae_audio = VAE(100, audio_encode, general_decode)
-vae_video = VAE(100, video_encode, general_decode)
-audio_encode.to(device), video_encode.to(device), general_decode.to(device), vae_audio.to(device), vae_video.to(device)
-# losses
-loss_MSE = torch.nn.MSELoss()
-loss_MSE.to(device)
-optimizer_audio = optim.Adam(vae_audio.parameters(), lr = wandb.config['learning_rate'])
-optimizer_video = optim.Adam(vae_video.parameters(), lr = wandb.config['learning_rate'])
-# losses directly from code
-def caluculate_losses(x_visual, x_audio, x_reconstruct, mu, logvar, epoch):
+#data loader
+with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['temporal'], 'r') as hf:
+    closs_labels = hf['avadataset'][:]
+with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['video'], 'r') as hf:
+    video_features = hf['avadataset'][:]
+with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['audio'], 'r') as hf:
+    audio_features = hf['avadataset'][:]
+with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['zsl_train'], 'r') as hf:
+    train_l = hf['dataset'][:]
+with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['zsl_val'], 'r') as hf:
+    val_l = hf['dataset'][:]
+with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['zsl_test'], 'r') as hf:
+    test_l = hf['dataset'][:]
+with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['spatial'], 'r') as hf:
+	labels = hf['avadataset'][:]
+
+closs_labels = np.array(closs_labels) ## 4143 * 10
+audio_features = np.array(audio_features)  ##  4143 * 10 * 128
+video_features = np.mean(np.array(video_features), axis=(2,3))  ##  4143 * 10 * 512
+closs_labels = closs_labels.astype("float32")
+audio_features = audio_features.astype("float32")
+video_features = video_features.astype("float32")
+labels = np.array(labels)
+x_audio_train = np.zeros((len(train_l)*10, 128))
+x_video_train = np.zeros((len(train_l)*10, 512))
+x_audio_val   = np.zeros((len(val_l)*10, 128))
+x_video_val   = np.zeros((len(val_l)*10, 512))
+x_audio_test  = np.zeros((len(test_l)*10, 128))
+x_video_test  = np.zeros((len(test_l)*10, 512))
+y_train       = np.zeros((len(train_l)*10))
+y_val         = np.zeros((len(val_l)*10))
+y_test        = np.zeros((len(test_l)*10))
+class_train   = np.zeros((len(train_l)*10))
+class_val     = np.zeros((len(val_l)*10))
+class_test    = np.zeros((len(test_l)*10))
+
+for i in range(len(train_l)):
+    id = train_l[i]
+    for j in range(10):
+        x_audio_train[10*i + j, :] = audio_features[id, j, :]
+        x_video_train[10*i + j, :] = video_features[id, j, :]
+        y_train[10*i + j] = closs_labels[id, j]
+        class_temp = np.array(np.nonzero(labels[id,j,:]))
+        class_train[10*i + j] = class_temp[0,0]
+
+for i in range(len(val_l)):
+    id = val_l[i]
+    for j in range(10):
+        x_audio_val[10 * i + j, :] = audio_features[id, j, :]
+        x_video_val[10 * i + j, :] = video_features[id, j, :]
+        y_val[10 * i + j] = closs_labels[id, j]
+        class_temp = np.array(np.nonzero(labels[id,j,:]))
+        class_val[10*i + j] = class_temp[0,0]
+
+for i in range(len(test_l)):
+    id = test_l[i]
+    for j in range(10):
+        x_audio_test[10 * i + j, :] = audio_features[id, j, :]
+        x_video_test[10 * i + j, :] = video_features[id, j, :]
+        y_test[10 * i + j] = closs_labels[id, j]
+        class_temp = np.array(np.nonzero(labels[id,j,:]))
+        class_test[10*i + j] = class_temp[0,0]
+
+def euclidean_dis(x, reconstructed_x):
+	dis = torch.dist(x,reconstructed_x,2)
+	return dis
+
+def avgpooling(x):
+	m = nn.AvgPool2d(7)
+	return m(x)
+
+def caluculate_loss_generaldec(x_visual, x_audio, x_reconstruct, mu, logvar, epoch):
+	loss_MSE = nn.MSELoss()
 	x_input = torch.cat((x_visual, x_audio), 1)
+	#bs = x_reconstruct.size(0)
 	mse_loss = loss_MSE(x_input, x_reconstruct)
 	kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 	_ , mu1, logvar1 = vae_audio(x_audio)
 	z1 = vae_audio.reparameterize(mu1, logvar1)
 	_, mu2, logvar2 = vae_video(x_visual)
 	z2 = vae_video.reparameterize(mu2, logvar2)
-	latent_loss = torch.dist(z1, z2, 2)
+	latent_loss = euclidean_dis(z1,z2)
 	if epoch < 10:
-		final_loss = mse_loss + kl_loss * 0.1 + latent_loss
+		final_loss = mse_loss + kl_loss*0.1 + latent_loss
 	else:
-		final_loss = mse_loss + kl_loss * 0.01 + latent_loss
+		final_loss = mse_loss + kl_loss*0.01 + latent_loss
 	return final_loss, kl_loss, mse_loss, latent_loss
-# training
-epoch = wandb.config['starting_epoch']
-running_loss, running_kl, running_mse, runnning_latent, iteration = 0.0, 0.0, 0.0, 0.0, 0
-BEST_SCORE = 0
-while epoch <= wandb.config['epochs']:
-    ### --------------- TRAIN --------------- ###
-    running_spatial, running_temporalV2A, running_temporalA2V, batch = 0.0, 0.0, 0.0, 0
-    for video, audio, temporal_labels, spatial_labels, class_names, back_start, back_end in train_loader:
-        batch_size = video.size(0)
-        optimizer_audio.zero_grad(), optimizer_video.zero_grad()
-        # other work just ignores the 3rd and 4th dims, no clue why
-        video = torch.mean(video,dim=(2,3)).to(device)
-        video /= torch.max(torch.abs(video)).to(device)
-        audio = audio.to(device)
-        audio /= torch.max(torch.abs(audio)).to(device)
-        flattened_video = torch.flatten(video, start_dim=0, end_dim=1).to(device)
-        flattened_audio = torch.flatten(audio, start_dim=0, end_dim=1).to(device)
-        spatial_labels, temporal_labels = spatial_labels.type(torch.LongTensor).to(device), temporal_labels.to(device)
-        # reconstruction
-        if epoch == 0:
-            x_reconstruct, mu, logvar = vae_video(flattened_video)
-        else:
-            x_reconstruct, mu, logvar = vae_video(flattened_video, vae_audio)
-        x_reconstruct_from_a, mu2, logvar2 = vae_audio(flattened_audio, vae_video)
-        V2A_accuracies, A2V_accuracies = torch.zeros([batch_size]), torch.zeros([batch_size])
-        for i in range(batch_size):
-            V2A_accuracies[i], A2V_accuracies[i] = VAE_CML(video[i], audio[i], temporal_labels[i], vae_audio, vae_video, device)
-        A2V_ACCURACY, V2A_ACCURACY = float(torch.sum(A2V_accuracies)) / batch_size, float(torch.sum(V2A_accuracies)) / batch_size
-        running_temporalV2A += V2A_ACCURACY
-        running_temporalA2V += A2V_ACCURACY
-        # calculate losses
-        loss1, kl_loss1, mse_loss1, latent_loss1 = caluculate_losses(flattened_video, flattened_audio, x_reconstruct, mu, logvar, epoch)
-        loss2, kl_loss2, mse_loss2, latent_loss2 = caluculate_losses(flattened_video, flattened_audio, x_reconstruct_from_a, mu2, logvar2, epoch)
-        FINAL_LOSS = loss1 + loss2
-        kl_loss = kl_loss1 + kl_loss2
-        mse_loss = mse_loss1 + mse_loss2
-        latent_loss = latent_loss1 + latent_loss2
-        FINAL_LOSS.backward()
-        optimizer_audio.step(), optimizer_video.step()
-        # apply and record iteration
-        batch += 1
-        iteration += 1
-        running_loss += float(FINAL_LOSS / 2)
-        running_kl += float(kl_loss / 2)
-        running_mse += float(mse_loss / 2)
-        runnning_latent += float(latent_loss / 2)
-        wandb.log({"batch": batch})
-        wandb.log({"Combined Loss": running_loss / iteration})
-        wandb.log({"KL Loss": running_kl / iteration})
-        wandb.log({"MSE Loss": running_mse / iteration})
-        wandb.log({"Latent Loss": runnning_latent / iteration})
-    wandb.log({"Training A2V": running_temporalA2V / batch})
-    wandb.log({"Training V2A": running_temporalV2A / batch})
-    ### --------------- TEST --------------- ###
-    running_temporalV2A, running_temporalA2V, batch = 0.0, 0.0, 0
-    for video, audio, temporal_labels, spatial_labels, class_names, back_start, back_end in test_loader:
-        if torch.sum(temporal_labels[0]) < 10:
-            batch_size = video.size(0)
-            optimizer_audio.zero_grad(), optimizer_video.zero_grad()
-            # other work just ignores the 3rd and 4th dims, no clue why
-            video = torch.mean(video,dim=(2,3)).to(device)
-            video /= torch.max(torch.abs(video)).to(device)
-            audio = audio.to(device)
-            audio /= torch.max(torch.abs(audio)).to(device)
-            spatial_labels, temporal_labels = spatial_labels.type(torch.LongTensor).to(device), temporal_labels.to(device)
-            # calculate scores
-            V2A_ACCURACY, A2V_ACCURACY = VAE_CML(video[0], audio[0], temporal_labels[0], vae_audio, vae_video, device)
-            # apply and record iteration
-            batch += 1
-            running_temporalV2A += V2A_ACCURACY
-            running_temporalA2V += A2V_ACCURACY
-    AVERAGE = (0.5*(running_temporalA2V / batch) + 0.5*(running_temporalV2A / batch))
-    if AVERAGE > BEST_SCORE:
-        BEST_SCORE = AVERAGE
-        # save current epoch
-        torch.save(vae_video.state_dict(), 'savefiles/vae/best_video_epoch.pth')
-        torch.save(vae_audio.state_dict(), 'savefiles/vae/best_audio_epoch.pth')
-        print("Saved Models for Epoch:" + str(epoch))
-    wandb.log({"Testing A2V": running_temporalA2V / batch})
-    wandb.log({"Testing V2A": running_temporalV2A / batch})
-    ### --------------- UNSEEN VAL --------------- ###
-    running_temporalV2A, running_temporalA2V, batch = 0.0, 0.0, 0
-    for video, audio, temporal_labels, spatial_labels, class_names, back_start, back_end in val_loader:
-        if torch.sum(temporal_labels[0]) < 10:
-            batch_size = video.size(0)
-            # other work just ignores the 3rd and 4th dims, no clue why
-            video = torch.mean(video,dim=(2,3)).to(device)
-            video[0] /= torch.max(torch.abs(video[0])).to(device)
-            audio = audio.to(device)
-            audio[0] /= torch.max(torch.abs(audio[0])).to(device)
-            spatial_labels, temporal_labels = spatial_labels.type(torch.LongTensor).to(device), temporal_labels.to(device)
-            # calculate scores
-            V2A_ACCURACY, A2V_ACCURACY = VAE_CML(video[0], audio[0], temporal_labels[0], vae_audio, vae_video, device)
-            # apply and record iteration
-            batch += 1
-            running_temporalV2A += V2A_ACCURACY
-            running_temporalA2V += A2V_ACCURACY
-    wandb.log({"Zero-Shot A2V": running_temporalA2V / batch})
-    wandb.log({"Zero-Shot V2A": running_temporalV2A / batch})
-    epoch += 1
-    print("Epoch: " + str(epoch - 1) + " finished!")
-print("Finished, finished.")
+
+def train_generaldec(epoch):
+	vae_audio.train()
+	vae_video.train()
+	train_loss = 0
+	kl_loss = 0
+	mse_loss = 0
+	latent_loss = 0
+	training_size = len(train_l)
+
+	for video_id in range(training_size):
+		s = video_id * 10
+		e = s + 10
+		visual_data_input = x_video_train[s:e,:]
+		audio_data_gt = x_audio_train[s:e,:]
+		event_label = y_train[s:e]
+		bg_index = np.where(event_label == 0)[0]
+		visual_data_input = np.delete(visual_data_input, bg_index, axis=0)
+		audio_data_gt = np.delete(audio_data_gt, bg_index, axis=0)
+		visual_data_input = torch.from_numpy(visual_data_input)
+		visual_data_input = visual_data_input.float()
+		visual_data_input = visual_data_input.cuda()
+		visual_data_input = Variable(visual_data_input)
+		audio_data_gt = torch.from_numpy(audio_data_gt)
+		audio_data_gt = audio_data_gt.float()
+		audio_data_gt = audio_data_gt.cuda()
+		audio_data_gt = Variable(audio_data_gt)
+		optimizer_audio.zero_grad()
+		optimizer_video.zero_grad()
+		if epoch == 0:
+			x_reconstruct_from_v, mu1, logvar1 = vae_video(visual_data_input)
+		else:
+			x_reconstruct_from_v, mu1, logvar1 = vae_video(visual_data_input,vae_audio)
+		loss1, kl1, mse1, latent1 = caluculate_loss_generaldec(visual_data_input, audio_data_gt, x_reconstruct_from_v, mu1, logvar1, epoch)
+		x_reconstruct_from_a, mu2, logvar2 = vae_audio(audio_data_gt, vae_video)
+		loss2, kl2, mse2, latent2 = caluculate_loss_generaldec(visual_data_input, audio_data_gt, x_reconstruct_from_a, mu2, logvar2, epoch)
+		loss = loss1 + loss2
+		kl = kl1 + kl2
+		mse = mse1 + mse2
+		latent = latent1 + latent2
+		loss.backward()
+		train_loss += loss.item()
+		kl_loss += kl.item()
+		mse_loss += mse.item()
+		latent_loss += mse.item()
+		optimizer_video.step()
+		optimizer_audio.step()
+	return train_loss, kl_loss, mse_loss, latent_loss
+
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+input_dim_visual = 512
+latent_dim = 100
+#out_dim_audio = 128
+batch_size = wandb.config['batch_size']
+training_size = len(train_l)
+testing_size = len(test_l)
+val_size = len(val_l)
+audio_encode = audio_encoder(latent_dim)
+video_encode = visual_encoder(latent_dim)
+general_decode = general_decoder(latent_dim)
+vae_audio = VAE(latent_dim, audio_encode, general_decode)
+vae_video = VAE(latent_dim, video_encode, general_decode)
+vae_audio.cuda()
+vae_video.cuda()
+optimizer_audio = optim.Adam(vae_audio.parameters(), lr=wandb.config['learning_rate'])
+optimizer_video = optim.Adam(vae_video.parameters(), lr=wandb.config['learning_rate'])
+for epoch in range(wandb.config['epochs']):
+	train_loss = 0
+	train_loss, kl_loss, mse_loss, latent_loss = train_generaldec(epoch)
+	train_loss /= training_size
+	kl_loss /= training_size
+	mse_loss /= training_size
+	latent_loss /= training_size
+	wandb.log({"Combined Loss": train_loss})
+	torch.save(vae_audio.state_dict(), 'savefiles/vae/msvae_a.pkl')
+	torch.save(vae_video.state_dict(), 'savefiles/vae/msvae_v.pkl')
+	print("Saved models for epoch " + str(epoch))
