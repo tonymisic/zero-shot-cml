@@ -16,12 +16,12 @@ wandb.init(project="DAM Baseline",
         "learning_rate": 0.01,
         "dataset": "AVE",
         "device": "GTX1080",
-        "epochs": 999,
+        "epochs": 120,
         "starting_epoch" : 0,
         "batch_size": 21,
         "threshold": 0.5,
         "lambda": 0.5,
-        "eval_classes": [5, 6, 7, 8, 9],
+        "eval_classes": "Manifold 2",
         "testSplit": 0.8
     }
 )
@@ -294,11 +294,11 @@ while epoch <= wandb.config['epochs']:
             running_temporalA2V += A2V_ACCURACY
             running_temporal += TEMPORAL_ACC
     print("Samples: " + str(batch))
-    wandb.log({"Testing A2V": running_temporalA2V / batch})
-    wandb.log({"Testing V2A": running_temporalV2A / batch})
-    wandb.log({"Testing SEL": running_spatial / batch})
-    wandb.log({"Testing Classification": running_classification / batch})
-    wandb.log({"Testing Temporal": running_temporal / batch})
+    wandb.log({"Zero-Shot A2V": running_temporalA2V / batch})
+    wandb.log({"Zero-Shot V2A": running_temporalV2A / batch})
+    wandb.log({"Zero-Shot SEL": running_spatial / batch})
+    wandb.log({"Zero-Shot Classification": running_classification / batch})
+    wandb.log({"Zero-Shot Temporal": running_temporal / batch})
     epoch += 1
     print("Epoch: " + str(epoch - 1) + " finished!")
 print("Finished, finished.")

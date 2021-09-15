@@ -30,6 +30,7 @@ wandb.init(project="VAE Baseline",
 # splittings
 settings = json.load(open('settings.json'))
 rootdir = 'AVE_Dataset/'
+ZSL = True
 gzs = GeneralizedZeroShot('AVE_Dataset/', precomputed=True)
 gzs.split_precomputed()
 #data loader
@@ -39,12 +40,20 @@ with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomput
     video_features = hf['avadataset'][:]
 with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['audio'], 'r') as hf:
     audio_features = hf['avadataset'][:]
-with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['zsl_train'], 'r') as hf:
-    train_l = hf['dataset'][:]
-with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['zsl_val'], 'r') as hf:
-    val_l = hf['dataset'][:]
-with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['zsl_test'], 'r') as hf:
-    test_l = hf['dataset'][:]
+if not ZSL:
+    with h5py.File(rootdir + settings['precomputed']['folder'] + 'train_order.h5', 'r') as hf:
+        train_l = hf['order'][:]
+    with h5py.File(rootdir + settings['precomputed']['folder'] + 'val_order.h5', 'r') as hf:
+        val_l = hf['order'][:]
+    with h5py.File(rootdir + settings['precomputed']['folder'] + 'test_order.h5', 'r') as hf:
+        test_l = hf['order'][:]
+else:
+    with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['zsl_train'], 'r') as hf:
+        train_l = hf['dataset'][:]
+    with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['zsl_val'], 'r') as hf:
+        val_l = hf['dataset'][:]
+    with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['zsl_test'], 'r') as hf:
+        test_l = hf['dataset'][:]
 with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['spatial'], 'r') as hf:
 	labels = hf['avadataset'][:]
 
@@ -188,7 +197,7 @@ x_video_test = norm(x_video_test)
 x_audio_test = norm(x_audio_test)
 print("Testing begins!")
 N = y_test.shape[0]
-s = 200
+s = 0
 e = s + 10
 count_num = 0
 audio_count = 0
@@ -260,7 +269,7 @@ for video_id in range(int(N / 10)):
 wandb.log({"Testing V2A": video_count / count_num, "Testing A2V": audio_count / count_num})
 print("Validation begins!")
 N = y_val.shape[0]
-s = 200
+s = 0
 e = s + 10
 count_num = 0
 audio_count = 0

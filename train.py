@@ -17,12 +17,12 @@ wandb.init(project="Best Baseline",
         "learning_rate": 0.001,
         "dataset": "AVE",
         "device": "GTX1080",
-        "epochs": 999,
+        "epochs": 300,
         "starting_epoch" : 0,
         "batch_size": 42,
         "threshold": 0.5,
         "lambda": 0.5,
-        "eval_classes": [0,1,2,3,4],
+        "eval_classes": "Manifold 2",
         "testSplit": 0.8
     }
 )

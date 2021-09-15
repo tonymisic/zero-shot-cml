@@ -76,15 +76,17 @@ class GeneralizedZeroShot():
         assert self.precomputed, "precomputed is false, but attempting to split precomputed."
         training, testing, validation = [], [], []
         for i, val in enumerate(self.spatial_labels, 0):
-            if self.inclusion_list[np.argmax(val)] == 1:
-                if self.indexer[np.argmax(val)] > self.counter[np.argmax(val)]:
-                    training.append(i)
-                elif np.sum(self.temporal_labels[i]) < 10: # only events that can be localized!
-                    testing.append(i)
-                self.counter[np.argmax(val)] += 1
-            else:
-                if np.sum(self.temporal_labels[i]) < 10: # only events that can be localized!
-                    validation.append(i)
+            for _, j in enumerate(val, 0):
+                if np.argmax(j) < 28:
+                    if self.inclusion_list[np.argmax(j)] == 1:
+                        if self.indexer[np.argmax(j)] > self.counter[np.argmax(j)]:
+                            training.append(i)
+                        else:
+                            testing.append(i)
+                        self.counter[np.argmax(j)] += 1
+                    else:
+                        validation.append(i)
+                    break
         hf1, hf2, hf3 = h5py.File(self.trainFile, 'w'), h5py.File(self.testFile, 'w'), h5py.File(self.valFile, 'w')
         hf1.create_dataset('dataset', data=np.array(training))
         hf2.create_dataset('dataset', data=np.array(testing))

@@ -24,6 +24,9 @@ info_all = load_videos('AVE_Dataset/Annotations.txt')[1:]
 info_train = load_videos('AVE_Dataset/trainSet.txt')
 info_test = load_videos('AVE_Dataset/testSet.txt')
 info_val = load_videos('AVE_Dataset/valSet.txt')
+info_train_zsl = load_videos('AVE_Dataset/trainSet.txt')
+info_test_zsl = load_videos('AVE_Dataset/testSet.txt')
+info_val_zsl = load_videos('AVE_Dataset/valSet.txt')
 class_map = json.load(open('AVE_Dataset/classes.json'))
 
 def analyze():

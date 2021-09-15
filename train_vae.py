@@ -17,7 +17,7 @@ wandb.init(project="VAE Baseline",
         "epochs": 15,
         "starting_epoch" : 0,
         "batch_size": 10,
-        "eval_classes": [0,1,2,3,4],
+        "eval_classes": "Manifold 2",
         "testSplit": 0.8
     }
 )
@@ -25,6 +25,7 @@ wandb.init(project="VAE Baseline",
 settings = json.load(open('settings.json'))
 rootdir = 'AVE_Dataset/'
 gzs = GeneralizedZeroShot('AVE_Dataset/', precomputed=True)
+ZSL = True
 gzs.split_precomputed()
 #data loader
 with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['temporal'], 'r') as hf:
@@ -33,12 +34,20 @@ with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomput
     video_features = hf['avadataset'][:]
 with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['audio'], 'r') as hf:
     audio_features = hf['avadataset'][:]
-with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['zsl_train'], 'r') as hf:
-    train_l = hf['dataset'][:]
-with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['zsl_val'], 'r') as hf:
-    val_l = hf['dataset'][:]
-with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['zsl_test'], 'r') as hf:
-    test_l = hf['dataset'][:]
+if not ZSL:
+    with h5py.File(rootdir + settings['precomputed']['folder'] + 'train_order.h5', 'r') as hf:
+        train_l = hf['order'][:]
+    with h5py.File(rootdir + settings['precomputed']['folder'] + 'val_order.h5', 'r') as hf:
+        val_l = hf['order'][:]
+    with h5py.File(rootdir + settings['precomputed']['folder'] + 'test_order.h5', 'r') as hf:
+        test_l = hf['order'][:]
+else:
+    with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['zsl_train'], 'r') as hf:
+        train_l = hf['dataset'][:]
+    with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['zsl_val'], 'r') as hf:
+        val_l = hf['dataset'][:]
+    with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['zsl_test'], 'r') as hf:
+        test_l = hf['dataset'][:]
 with h5py.File(rootdir + settings['precomputed']['folder'] + settings['precomputed']['spatial'], 'r') as hf:
 	labels = hf['avadataset'][:]
 
