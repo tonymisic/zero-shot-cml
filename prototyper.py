@@ -24,21 +24,24 @@ test_data = AVE('AVE_Dataset/', 'test', 'settings.json', precomputed=True, ZSL=Z
 test_loader = DataLoader(test_data, 1, shuffle=True, num_workers=1, pin_memory=True)
 val_data = AVE('AVE_Dataset/', 'val', 'settings.json', precomputed=True, ZSL=ZSL)
 val_loader = DataLoader(val_data, 1, shuffle=True, num_workers=1, pin_memory=True)
-
+total = 0
 for _, _, temporal_labels, spatial_labels, class_names, back_start, back_end in train_loader:
     for i in class_names:
         if i[0] != 'Background':
             classes_list_train[i[0]] += 1
+            total += 1
             break
 for _, _, temporal_labels, spatial_labels, class_names, back_start, back_end in test_loader:
     for i in class_names:
         if i[0] != 'Background':
             classes_list_test[i[0]] += 1
+            total += 1
             break
 for _, _, temporal_labels, spatial_labels, class_names, back_start, back_end in val_loader:
     for i in class_names:
         if i[0] != 'Background':
             classes_list_val[i[0]] += 1
+            total += 1
             break
 print("training class count")
 print(classes_list_train)
@@ -46,3 +49,4 @@ print("testing class count")
 print(classes_list_test)
 print("validation class count")
 print(classes_list_val)
+print("Total sample count: " + str(total))

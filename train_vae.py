@@ -14,10 +14,10 @@ wandb.init(project="VAE Baseline",
         "learning_rate": 0.00001,
         "dataset": "AVE",
         "device": "GTX1080",
-        "epochs": 15,
+        "epochs": 25,
         "starting_epoch" : 0,
         "batch_size": 10,
-        "eval_classes": "Manifold 2",
+        "eval_classes": "Manifold Test",
         "testSplit": 0.8
     }
 )

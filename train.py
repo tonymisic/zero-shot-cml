@@ -22,7 +22,7 @@ wandb.init(project="Best Baseline",
         "batch_size": 42,
         "threshold": 0.5,
         "lambda": 0.5,
-        "eval_classes": "Manifold 2",
+        "eval_classes": "Manifold Test",
         "testSplit": 0.8
     }
 )

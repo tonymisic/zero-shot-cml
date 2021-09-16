@@ -23,7 +23,7 @@ wandb.init(project="VAE Baseline",
         "epochs": 999,
         "starting_epoch": 0,
         "batch_size": 21,
-        "eval_classes": [0, 1, 2, 3, 4],
+        "eval_classes": "Manifold Test",
         "testSplit": 0.8
     }
 )

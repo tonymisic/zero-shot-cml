@@ -16,12 +16,12 @@ wandb.init(project="DAM Baseline",
         "learning_rate": 0.01,
         "dataset": "AVE",
         "device": "GTX1080",
-        "epochs": 120,
+        "epochs": 200,
         "starting_epoch" : 0,
         "batch_size": 21,
         "threshold": 0.5,
         "lambda": 0.5,
-        "eval_classes": "Manifold 2",
+        "eval_classes": "Manifold Test",
         "testSplit": 0.8
     }
 )
@@ -39,13 +39,9 @@ val_data = AVE('AVE_Dataset/', 'val', 'settings.json', precomputed=True, ZSL=Tru
 val_loader = DataLoader(val_data, 1, shuffle=True, num_workers=1, pin_memory=True)
 # models
 audio_attention_model = SelfAttention(256)
-audio_attention_model.load_state_dict(torch.load('savefiles/audio/epoch600.pth'))
 video_attention_model = SelfAttention(256, video=True)
-video_attention_model.load_state_dict(torch.load('savefiles/video/epoch600.pth'))
 guided_model = AudioGuidedAttention(linear_in=512)
-guided_model.load_state_dict(torch.load('savefiles/guided/epoch600.pth'))
 classifier = MLP(512, 29)
-classifier.load_state_dict(torch.load('savefiles/classifier/epoch600.pth'))
 video_linear, audio_linear = AdjustVideo(), AdjustAudio()
 classifier.to(device), audio_attention_model.to(device), video_attention_model.to(device), guided_model.to(device)
 video_linear.to(device), audio_linear.to(device)
