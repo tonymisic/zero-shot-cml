@@ -60,7 +60,7 @@ epoch = wandb.config['starting_epoch']
 running_loss, run_temp, run_spat, iteration = 0.0, 0.0, 0.0, 0
 while epoch <= wandb.config['epochs']:
     ### --------------- TRAIN --------------- ###
-    running_spatial, running_temporalV2A, running_temporalA2V, running_temporal, running_classification, batch = 0.0, 0.0, 0.0, 0.0, 0.0, 1
+    running_spatial, running_temporalV2A, running_temporalA2V, running_temporal, running_classification, batch = 0.0, 0.0, 0.0, 0.0, 0.0, 0
     for video, audio, temporal_labels, spatial_labels, class_names, back_start, back_end in train_loader:
         batch_size = video.size(0)
         optimizer_classifier.zero_grad(), optimizer_audio.zero_grad(), optimizer_video.zero_grad(), optimizer_guided.zero_grad()

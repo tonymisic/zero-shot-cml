@@ -10,7 +10,6 @@ class AudioSelfAttention(nn.Module):
         self.linear = nn.Linear(embed_dim, 256)
     def forward(self, x):
         x, _ = self.attention(x, x, x)
-        x = x.permute([1,0,2]).flatten(0,1)
         return F.relu(self.linear(x))
     
 class VideoSelfAttention(nn.Module):
@@ -22,5 +21,4 @@ class VideoSelfAttention(nn.Module):
         self.linear = nn.Linear(embed_dim, 256)
     def forward(self, x):
         x, _ = self.attention(x, x, x)
-        x = x.permute([1,0,2]).flatten(0,1)
         return F.relu(self.linear(x))
