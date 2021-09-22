@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+
 def max_similarity(query, target, event_start, sim='cosine'):
     sims = []
     for i in range(target.size(0)):
@@ -15,13 +16,13 @@ def localize(target_audio, target_video, query_audio, query_video, labels, devic
     sims_to_audio = torch.zeros([10]).to(device)
     for j in range(10):
         sims_to_audio[j] = torch.dot(query_video, target_audio[j])
-    v2a = max_contiguos_sum(sims_to_audio, labels, device)
+    v2a, start_v2a, end_v2a = max_contiguos_sum(sims_to_audio, labels, device)
     # Global Audio to Video
     sims_to_video = torch.zeros([10]).to(device)
     for j in range(10):
         sims_to_video[j] = torch.dot(query_audio, target_video[j])
-    a2v = max_contiguos_sum(sims_to_video, labels, device)
-    return v2a, a2v
+    a2v, start_a2v, end_a2v = max_contiguos_sum(sims_to_video, labels, device)
+    return v2a, a2v, start_v2a, end_v2a, start_a2v, end_a2v
 
 def max_contiguos_sum(similarities, labels, device):
     length, sums = int(torch.sum(labels)), []
@@ -32,9 +33,9 @@ def max_contiguos_sum(similarities, labels, device):
     prediction = torch.zeros([10]).to(device)
     prediction[start:start + length] = 1
     if torch.equal(prediction, labels):
-        return 1
+        return 1, start, start + length 
     else:
-        return 0
+        return 0, start, start + length
 
 def test_cmm_a2v(video_feature, audio_feature, vae_video, vae_audio):
 	with torch.no_grad():

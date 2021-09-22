@@ -14,7 +14,7 @@ Main training script
 wandb.init(project="Best Baseline",
     config={
         "task": "Standard CML",
-        "learning_rate": 0.001,
+        "learning_rate": 0.01,
         "dataset": "AVE",
         "device": "GTX1080",
         "epochs": 300,

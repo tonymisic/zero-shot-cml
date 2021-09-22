@@ -2,8 +2,9 @@ from models.dam import SelfAttention, AudioGuidedAttention, MLP, AdjustAudio, Ad
 from dataloader import AVE
 from utils import GeneralizedZeroShot
 from metrics import localize
+from visualization import histogram
 from torch.utils.data.dataloader import DataLoader
-import torch, wandb, torch.optim as optim 
+import torch, wandb, torch.optim as optim
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID" 
 os.environ["CUDA_VISIBLE_DEVICES"]="2"
@@ -31,11 +32,12 @@ gzs.split_precomputed()
 # devices
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # loaders
-train_data = AVE('AVE_Dataset/', 'train', 'settings.json', precomputed=True, ZSL=True)
-train_loader = DataLoader(train_data, wandb.config['batch_size'], shuffle=True, num_workers=3, pin_memory=True)
-test_data = AVE('AVE_Dataset/', 'test', 'settings.json', precomputed=True, ZSL=True)
+ZSL = True
+train_data = AVE('AVE_Dataset/', 'train', 'settings.json', precomputed=True, ZSL=ZSL)
+train_loader = DataLoader(train_data, wandb.config['batch_size'], shuffle=True, num_workers=1, pin_memory=True)
+test_data = AVE('AVE_Dataset/', 'test', 'settings.json', precomputed=True, ZSL=ZSL)
 test_loader = DataLoader(test_data, 1, shuffle=True, num_workers=1, pin_memory=True)
-val_data = AVE('AVE_Dataset/', 'val', 'settings.json', precomputed=True, ZSL=True)
+val_data = AVE('AVE_Dataset/', 'val', 'settings.json', precomputed=True, ZSL=ZSL)
 val_loader = DataLoader(val_data, 1, shuffle=True, num_workers=1, pin_memory=True)
 # models
 audio_attention_model = SelfAttention(256)
@@ -60,8 +62,18 @@ epoch = wandb.config['starting_epoch']
 running_loss, run_temp, run_spat, iteration = 0.0, 0.0, 0.0, 0
 while epoch <= wandb.config['epochs']:
     ### --------------- TRAIN --------------- ###
+    starts_gt, ends_gt = None, None
+    start_v2a, end_v2a, start_a2v, end_a2v = None, None, None, None
     running_spatial, running_temporalV2A, running_temporalA2V, running_temporal, running_classification, batch = 0.0, 0.0, 0.0, 0.0, 0.0, 0
     for video, audio, temporal_labels, spatial_labels, class_names, back_start, back_end in train_loader:
+        # create list of event starts and ends
+        if batch == 0:
+            starts_gt = back_start.detach()
+            ends_gt = back_end.detach()
+        else:
+            starts_gt = torch.cat((starts_gt, back_start.detach()), dim=0)
+            ends_gt = torch.cat((ends_gt, back_end.detach()), dim=0)
+        # initialization
         batch_size = video.size(0)
         optimizer_classifier.zero_grad(), optimizer_audio.zero_grad(), optimizer_video.zero_grad(), optimizer_guided.zero_grad()
         opti_lin_v.zero_grad(), opti_lin_a.zero_grad()
@@ -96,13 +108,22 @@ while epoch <= wandb.config['epochs']:
         # temporal predictions
         temporal_preds = torch.zeros(temporal_labels.size()).to(device)
         V2A_accuracies, A2V_accuracies = torch.zeros([batch_size]), torch.zeros([batch_size])
+        V2A_starts, V2A_ends, A2V_starts, A2V_ends = torch.zeros([batch_size]), torch.zeros([batch_size]), torch.zeros([batch_size]), torch.zeros([batch_size])
         for i in range(batch_size):
-            V2A_accuracies[i], A2V_accuracies[i] = localize(local_audio[i], guided_video[i], audio_global_cml[i], video_global_cml[i], temporal_labels[i], device)
+            V2A_accuracies[i], A2V_accuracies[i], V2A_starts[i], V2A_ends[i], A2V_starts[i], A2V_ends[i] = localize(local_audio[i], guided_video[i], audio_global_cml[i], video_global_cml[i], temporal_labels[i], device)
             temporal_preds[i] = dam(audio_global_cml[i], video_global_cml[i], local_audio[i], guided_video[i])
-        A2V_ACCURACY, V2A_ACCURACY = float(torch.sum(A2V_accuracies)) / batch_size, float(torch.sum(V2A_accuracies)) / batch_size
         TEMPORAL_ACC = float(torch.sum(temporal_preds.round() == temporal_labels)) / (batch_size * 10)
+        A2V_ACCURACY, V2A_ACCURACY = float(torch.sum(A2V_accuracies)) / batch_size, float(torch.sum(V2A_accuracies)) / batch_size
         # Binary Cross Entropy per segment on temporal predictions
         LOSS_TEMPORAL = event_criterion(temporal_preds.flatten(), temporal_labels.flatten())
+        # create list of event starts and ends
+        if batch == 0:
+            start_v2a, end_v2a, start_a2v, end_a2v = V2A_starts.detach(), V2A_ends.detach(), A2V_starts.detach(), A2V_ends.detach()
+        else:
+            start_v2a = torch.cat((start_v2a, V2A_starts.detach()), dim=0)
+            end_v2a = torch.cat((end_v2a, V2A_ends.detach()), dim=0)
+            start_a2v = torch.cat((start_a2v, A2V_starts.detach()), dim=0)
+            end_a2v = torch.cat((end_a2v, A2V_ends.detach()), dim=0)
         ######### ------------------------------ SUPERVISED EVENT LOCALIZATION ---------------------------------------- ###########
         # classifier prediction
         classifier_output = classifier(torch.cat([video_global_sel, audio_global_sel], dim=1))
@@ -142,6 +163,7 @@ while epoch <= wandb.config['epochs']:
         wandb.log({"Combined Loss": running_loss / iteration})
         wandb.log({"Temporal Loss": run_temp / iteration})
         wandb.log({"Spatial Loss": run_spat / iteration})
+    # visualize epoch predictions
     print("Samples: " + str(batch))
     wandb.log({"Training A2V": running_temporalA2V / batch})
     wandb.log({"Training V2A": running_temporalV2A / batch})
@@ -152,11 +174,23 @@ while epoch <= wandb.config['epochs']:
     torch.save(video_attention_model.state_dict(), 'savefiles/video/epoch' + str(epoch) + '.pth')
     torch.save(classifier.state_dict(), 'savefiles/classifier/epoch' + str(epoch) + '.pth')
     torch.save(guided_model.state_dict(), 'savefiles/guided/epoch' + str(epoch) + '.pth')
+    histogram(starts_gt.type(torch.IntTensor), start_v2a.type(torch.IntTensor), start_a2v.type(torch.IntTensor), file="histograms/dam/starts/histogram_starts" + str(epoch) + "train.jpg", time='start')
+    histogram(ends_gt.type(torch.IntTensor), end_v2a.type(torch.IntTensor), end_a2v.type(torch.IntTensor), file="histograms/dam/ends/histogram_ends" + str(epoch) + "train.jpg", time='end')
     print("Saved Models for Epoch:" + str(epoch))
     ### --------------- TEST --------------- ###
+    starts_gt, ends_gt = None, None
+    start_v2a, end_v2a, start_a2v, end_a2v = None, None, None, None
     running_spatial, running_temporalV2A, running_temporalA2V, running_temporal, running_classification, batch = 0.0, 0.0, 0.0, 0.0, 0.0, 0
     for video, audio, temporal_labels, spatial_labels, class_names, back_start, back_end in test_loader:
         if torch.sum(temporal_labels[0]) < 10:
+            # create list of event starts and ends
+            if batch == 0:
+                starts_gt = back_start.detach()
+                ends_gt = back_end.detach()
+            else:
+                starts_gt = torch.cat((starts_gt, back_start.detach()), dim=0)
+                ends_gt = torch.cat((ends_gt, back_end.detach()), dim=0)
+            # initialization
             batch_size = video.size(0)
             optimizer_classifier.zero_grad(), optimizer_audio.zero_grad(), optimizer_video.zero_grad(), optimizer_guided.zero_grad()
             video, local_audio = torch.mean(video, dim=(2,3)).to(device), audio.to(device)
@@ -190,11 +224,20 @@ while epoch <= wandb.config['epochs']:
             # temporal predictions
             temporal_preds = torch.zeros(temporal_labels.size()).to(device)
             V2A_accuracies, A2V_accuracies = torch.zeros([batch_size]), torch.zeros([batch_size])
+            V2A_starts, V2A_ends, A2V_starts, A2V_ends = torch.zeros([batch_size]), torch.zeros([batch_size]), torch.zeros([batch_size]), torch.zeros([batch_size])
             for i in range(batch_size):
-                V2A_accuracies[i], A2V_accuracies[i] = localize(local_audio[i], guided_video[i], audio_global_cml[i], video_global_cml[i], temporal_labels[i], device)
+                V2A_accuracies[i], A2V_accuracies[i], V2A_starts[i], V2A_ends[i], A2V_starts[i], A2V_ends[i] = localize(local_audio[i], guided_video[i], audio_global_cml[i], video_global_cml[i], temporal_labels[i], device)
                 temporal_preds[i] = dam(audio_global_cml[i], video_global_cml[i], local_audio[i], guided_video[i])
-            A2V_ACCURACY, V2A_ACCURACY = float(torch.sum(A2V_accuracies)) / batch_size, float(torch.sum(V2A_accuracies)) / batch_size
             TEMPORAL_ACC = float(torch.sum(temporal_preds.round() == temporal_labels)) / (batch_size * 10)
+            A2V_ACCURACY, V2A_ACCURACY = float(torch.sum(A2V_accuracies)) / batch_size, float(torch.sum(V2A_accuracies)) / batch_size
+            # create list of event starts and ends
+            if batch == 0:
+                start_v2a, end_v2a, start_a2v, end_a2v = V2A_starts.detach(), V2A_ends.detach(), A2V_starts.detach(), A2V_ends.detach()
+            else:
+                start_v2a = torch.cat((start_v2a, V2A_starts.detach()), dim=0)
+                end_v2a = torch.cat((end_v2a, V2A_ends.detach()), dim=0)
+                start_a2v = torch.cat((start_a2v, A2V_starts.detach()), dim=0)
+                end_a2v = torch.cat((end_a2v, A2V_ends.detach()), dim=0)
             ######### ------------------------------ SUPERVISED EVENT LOCALIZATION ---------------------------------------- ###########
             # classifier prediction
             classifier_output = classifier(torch.cat([video_global_sel, audio_global_sel], dim=1))
@@ -219,15 +262,20 @@ while epoch <= wandb.config['epochs']:
             running_temporalA2V += A2V_ACCURACY
             running_temporal += TEMPORAL_ACC
     print("Samples: " + str(batch))
+    histogram(starts_gt.type(torch.IntTensor), start_v2a.type(torch.IntTensor), start_a2v.type(torch.IntTensor), file="histograms/dam/starts/histogram_starts" + str(epoch) + "test.jpg", time='start')
+    histogram(ends_gt.type(torch.IntTensor), end_v2a.type(torch.IntTensor), end_a2v.type(torch.IntTensor), file="histograms/dam/ends/histogram_ends" + str(epoch) + "test.jpg", time='end')
     wandb.log({"Testing A2V": running_temporalA2V / batch})
     wandb.log({"Testing V2A": running_temporalV2A / batch})
     wandb.log({"Testing SEL": running_spatial / batch})
     wandb.log({"Testing Classification": running_classification / batch})
     wandb.log({"Testing Temporal": running_temporal / batch})
-    ### --------------- TEST --------------- ###
+    ### --------------- VAL --------------- ###
+    starts_gt, ends_gt = None, None
+    start_v2a, end_v2a, start_a2v, end_a2v = None, None, None, None
     running_spatial, running_temporalV2A, running_temporalA2V, running_temporal, running_classification, batch = 0.0, 0.0, 0.0, 0.0, 0.0, 0
     for video, audio, temporal_labels, spatial_labels, class_names, back_start, back_end in val_loader:
-        if torch.sum(temporal_labels[0]) < 10:
+        if torch.sum(temporal_labels[0]) < 10:    
+            # init
             batch_size = video.size(0)
             optimizer_classifier.zero_grad(), optimizer_audio.zero_grad(), optimizer_video.zero_grad(), optimizer_guided.zero_grad()
             video, local_audio = torch.mean(video, dim=(2,3)).to(device), audio.to(device)
@@ -261,11 +309,12 @@ while epoch <= wandb.config['epochs']:
             # temporal predictions
             temporal_preds = torch.zeros(temporal_labels.size()).to(device)
             V2A_accuracies, A2V_accuracies = torch.zeros([batch_size]), torch.zeros([batch_size])
+            V2A_starts, V2A_ends, A2V_starts, A2V_ends = torch.zeros([batch_size]), torch.zeros([batch_size]), torch.zeros([batch_size]), torch.zeros([batch_size])
             for i in range(batch_size):
-                V2A_accuracies[i], A2V_accuracies[i] = localize(local_audio[i], guided_video[i], audio_global_cml[i], video_global_cml[i], temporal_labels[i], device)
+                V2A_accuracies[i], A2V_accuracies[i], V2A_starts[i], V2A_ends[i], A2V_starts[i], A2V_ends[i] = localize(local_audio[i], guided_video[i], audio_global_cml[i], video_global_cml[i], temporal_labels[i], device)
                 temporal_preds[i] = dam(audio_global_cml[i], video_global_cml[i], local_audio[i], guided_video[i])
-            A2V_ACCURACY, V2A_ACCURACY = float(torch.sum(A2V_accuracies)) / batch_size, float(torch.sum(V2A_accuracies)) / batch_size
             TEMPORAL_ACC = float(torch.sum(temporal_preds.round() == temporal_labels)) / (batch_size * 10)
+            A2V_ACCURACY, V2A_ACCURACY = float(torch.sum(A2V_accuracies)) / batch_size, float(torch.sum(V2A_accuracies)) / batch_size
             ######### ------------------------------ SUPERVISED EVENT LOCALIZATION ---------------------------------------- ###########
             # classifier prediction
             classifier_output = classifier(torch.cat([video_global_sel, audio_global_sel], dim=1))
