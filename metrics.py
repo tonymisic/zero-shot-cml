@@ -35,7 +35,7 @@ def max_contiguos_sum(similarities, labels, device):
     if torch.equal(prediction, labels):
         return 1, start, start + length 
     else:
-        return 0, start, start + length
+        return 0, 9, 1
 
 def test_cmm_a2v(video_feature, audio_feature, vae_video, vae_audio):
 	with torch.no_grad():
